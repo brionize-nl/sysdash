@@ -1,0 +1,15 @@
+# SysDash render-service — systemd unit. Installer vult __USER__ en __DIR__ in.
+[Unit]
+Description=SysDash render-service (HUD-kaart voor Discord)
+After=network.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__DIR__
+ExecStart=/usr/bin/python3 __DIR__/render/render.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

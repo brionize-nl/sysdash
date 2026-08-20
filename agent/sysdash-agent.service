@@ -1,0 +1,17 @@
+# SysDash agent — systemd unit. De installer vult __USER__ en __DIR__ in.
+[Unit]
+Description=SysDash agent (metrics naar Supabase)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__DIR__
+EnvironmentFile=__DIR__/.env
+ExecStart=/usr/bin/python3 __DIR__/agent/agent.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

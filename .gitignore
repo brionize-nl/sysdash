@@ -1,0 +1,11 @@
+# Secrets — NOOIT in een repo
+.env
+*.env
+!.env.example
+# Python
+__pycache__/
+*.pyc
+.venv/
+# Lokaal
+*.log
+*.bak-*

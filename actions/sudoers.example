@@ -1,0 +1,4 @@
+# SysDash actie-laag — MINIMALE rechten.
+# Installeer als /etc/sudoers.d/sysdash (installer doet dit met 'visudo -c' controle).
+# Vervang __USER__ door de SysDash-gebruiker. Sta ALLEEN deze twee commando's toe — niks anders.
+__USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl restart sysdash-render, /usr/bin/systemctl restart sysdash-agent

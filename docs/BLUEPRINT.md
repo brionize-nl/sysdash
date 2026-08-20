@@ -98,7 +98,7 @@ sysdash/
 ## 7. Automatisch vs. jij invult
 
 - **Automatisch:** hardware-probe, machine-klaar-maken, mappen, services, checks, backups, verificatie.
-- **Jij vult in (kan ik nooit zien):** Supabase URL + sleutels, Discord-webhook. Via `.env`.
+- **Handmatig in te vullen:** Supabase URL + sleutels, Discord-webhook. Via `.env` (nooit hardcoded).
 
 ---
 
@@ -162,10 +162,12 @@ Na elk blok: `PROGRESS.md` bijgewerkt.
 
 ---
 
-## 12. Nu aan zet
+## 12. Roadmap
 
-Eén **recon-run**: `probe.py` op **delli5** én **pro**, uitvoer plakken. Daarna werk ik alles uit tot een afgerond pakket; jij komt er pas weer bij voor de eindrun.
+- Actie-laag trede 2-4 (opschonen / herstart-op-afstand / update-knop)
+- Baselines/anomalie-detectie (Laag 2) vullen
+- Optionele fullscreen-PWA via een eigen domein
 
 ---
 
-*Modulair, één geheel, makkelijk te wijzigen. Alles wat je vroeg — netjes op een rij.*
+*Modulair, één geheel, makkelijk te wijzigen.*

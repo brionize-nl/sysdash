@@ -1,4 +1,22 @@
-# SysDash actie-laag — MINIMALE rechten.
+# SysDash actie-laag — Advanced-modus. MINIMALE rechten.
 # Installeer als /etc/sudoers.d/sysdash (installer doet dit met 'visudo -c' controle).
-# Vervang __USER__ door de SysDash-gebruiker. Sta ALLEEN deze twee commando's toe — niks anders.
-__USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl restart sysdash-render, /usr/bin/systemctl restart sysdash-agent
+# Vervang __USER__ door de SysDash-gebruiker, __DIR__ door het projectpad. Sta UITSLUITEND deze
+# exacte commando's toe — niks generieks, geen wildcards. Elke regel hoort bij precies één
+# whitelist-actie in de code:
+#   trede 1 (zelf-herstel, action-runner.py):        restart render/agent
+#   trede 3 (herstart vanaf telefoon, actions-gateway.py): restart web/live/tunnel (+ render/agent)
+#   trede 2 (veilige opschoning, actions-gateway.py): apt-get autoremove/clean, journalctl vacuum
+#   trede 4 (hele machine herstarten, actions-gateway.py): systemctl reboot — bewust GEEN poweroff
+#   downgrade naar Basis-modus (actions-gateway.py):  vaste, zelfstandige downgrade-routine
+__USER__ ALL=(root) NOPASSWD: \
+    /usr/bin/systemctl restart sysdash-render, \
+    /usr/bin/systemctl restart sysdash-agent, \
+    /usr/bin/systemctl restart sysdash-web, \
+    /usr/bin/systemctl restart sysdash-live, \
+    /usr/bin/systemctl restart sysdash-tunnel, \
+    /usr/bin/apt-get autoremove -y, \
+    /usr/bin/apt-get clean, \
+    /usr/bin/journalctl --vacuum-time=7d, \
+    /usr/bin/systemctl reboot, \
+    /usr/bin/bash __DIR__/install/downgrade-to-basis.sh, \
+    /usr/bin/systemctl restart sysdash-actions-gateway

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # SysDash v12 · AGENT-installer (draai op een extra machine, bv. de laptop).
-# Zet alleen de agent neer (meet + pusht naar Supabase). Geen hub-onderdelen.
+# Zet de agent (meet + pusht naar Supabase) + de actie-laag neer (trede 1 zelf-herstel,
+# trede 2-4 opschoning/herstart/reboot vanaf het dashboard). Geen hub-onderdelen (dashboard,
+# render, tunnel, auto-update, live-modus, overzicht) — die horen bij install/setup.sh.
 set -u
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
 USER_NAME="$(whoami)"
@@ -25,14 +27,31 @@ if [ ! -f "$DIR/.env" ]; then
   sed -i "s#^MACHINE_NAME=.*#MACHINE_NAME=$V#" "$DIR/.env"
   ok ".env ingevuld"
 else ok ".env bestaat al"; fi
+chmod 600 "$DIR/.env" && ok ".env op 600 (alleen owner leesbaar)"
 
 say "3. Machine monitoring-klaar maken"
 bash "$DIR/install/prepare-machine.sh"
 
 say "4. Agent installeren (systemd)"
-sed -e "s#__USER__#$USER_NAME#g" -e "s#__DIR__#$DIR#g" "$DIR/agent/sysdash-agent.service" | sudo tee /etc/systemd/system/sysdash-agent.service >/dev/null
+inst(){ sed -e "s#__USER__#$USER_NAME#g" -e "s#__DIR__#$DIR#g" "$2" | sudo tee "/etc/systemd/system/$1" >/dev/null && ok "$1"; }
+inst sysdash-agent.service "$DIR/agent/sysdash-agent.service"
 sudo systemctl daemon-reload && sudo systemctl enable --now sysdash-agent >/dev/null 2>&1
 sleep 2
 systemctl is-active --quiet sysdash-agent && ok "agent draait" || warn "agent niet actief — journalctl -u sysdash-agent"
+
+say "5. Actie-laag (zelf-herstel + acties vanaf het dashboard)"
+inst sysdash-actions.service "$DIR/actions/sysdash-actions.service"
+inst sysdash-actions-gateway.service "$DIR/actions/sysdash-actions-gateway.service"
+sudo systemctl daemon-reload
+sudo systemctl enable --now sysdash-actions sysdash-actions-gateway >/dev/null 2>&1 && ok "action-runner + actions-gateway gestart"
+
+say "6. Actie-laag rechten (minimale sudoers)"
+TMP=$(mktemp); sed "s#__USER__#$USER_NAME#g" "$DIR/actions/sudoers.example" > "$TMP"
+if sudo visudo -c -f "$TMP" >/dev/null 2>&1; then
+  sudo cp "$TMP" /etc/sudoers.d/sysdash && sudo chmod 440 /etc/sudoers.d/sysdash && ok "sudoers geïnstalleerd (whitelist: restart sysdash-diensten + veilige opschoning + herstart)"
+else warn "sudoers-controle faalde — zelf-herstel kan niet herstarten (rest werkt wel)"; fi
+rm -f "$TMP"
+
 echo ""
-echo "KLAAR — deze machine meet nu mee. Zie 'm op het dashboard verschijnen."
+echo "KLAAR — deze machine meet nu mee én kan vanaf het dashboard bediend worden"
+echo "(profiel/opschoning/herstart/reboot). Zie 'm op het dashboard verschijnen."

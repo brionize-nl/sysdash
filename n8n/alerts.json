@@ -1,197 +1,197 @@
 {
-  "name": "SysDash Alerts",
-  "nodes": [
-    {
-      "parameters": {
-        "rule": {
-          "interval": [
-            {
-              "field": "cronExpression",
-              "expression": "*/2 * * * *"
-            }
-          ]
-        }
-      },
-      "id": "n-sched",
-      "name": "Schema",
-      "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.2,
-      "position": [
-        0,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "operation": "getAll",
-        "tableId": "config",
-        "returnAll": true
-      },
-      "id": "n-cfg",
-      "name": "Config ophalen",
-      "type": "n8n-nodes-base.supabase",
-      "typeVersion": 1,
-      "position": [
-        220,
-        -120
-      ],
-      "credentials": {
-        "supabaseApi": {
-          "id": "REPLACE_ME",
-          "name": "Supabase SysDash"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "operation": "getAll",
-        "tableId": "v_latest",
-        "returnAll": true
-      },
-      "id": "n-met",
-      "name": "Metrics ophalen",
-      "type": "n8n-nodes-base.supabase",
-      "typeVersion": 1,
-      "position": [
-        220,
-        0
-      ],
-      "credentials": {
-        "supabaseApi": {
-          "id": "REPLACE_ME",
-          "name": "Supabase SysDash"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "jsCode": "\nconst NOW = Date.now();\nconst cfg = (($('Config ophalen').all()[0]||{}).json)||{};\nconst TH  = (cfg.thresholds && cfg.thresholds.default) || {};\nconst OFFLINE_MIN = TH.offline_min ?? 10, UPD_MANY = TH.updates_many ?? 20;\nconst BAT_MIN = TH.bat_min ?? 15, DISK_WARN = TH.disk_warn ?? 80, DISK_ALARM = TH.disk_alarm ?? 90;\nconst TEMP_ALARM = TH.temp_alarm ?? 90;\nconst num = v => (v==null||v==='')?NaN:Number(v);\nconst tms = r => Date.parse(r.ts);\nconst hhmm = () => new Date(NOW).toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Amsterdam'});\nconst asArr = v => Array.isArray(v)?v:(typeof v==='string'?(()=>{try{return JSON.parse(v)}catch(e){return null}})():null);\nconst rows = $input.all().map(i=>i.json);          // v_latest: 1 rij per machine\nconst online = rows.filter(r=>!isNaN(tms(r)) && (NOW-tms(r))/60000 <= OFFLINE_MIN);\nconst label = m => (m||'?');\n\nconst t=hhmm(); const store=$getWorkflowStaticData('global'); store.a=store.a||{};\nconst out=[]; const t2=(m,k)=>m+':'+k;\nfunction fire(m,key,active,spec,caption){\n  const id=t2(m,key); const was=!!store.a[id];\n  if(active && !was){ store.a[id]=true; out.push({json:{caption,spec}}); }\n  else if(!active && was){ store.a[id]=false;\n    out.push({json:{caption:'\\u2713 Opgelost \\u2014 '+m+' \\u00b7 '+t,\n      spec:{title:'\\u2713 Opgelost \\u2014 '+m,subtitle:t,state:'ok',\n        rows:[{label:key.toUpperCase(),value:'weer OK',status:'ok'}],footer:'SysDash \\u00b7 hersteld \\u00b7 '+t}}}); }\n}\n// per machine de vitale checks\nfor(const d of rows){\n  const m=label(d.machine); const off=isNaN(tms(d))||(NOW-tms(d))/60000>OFFLINE_MIN;\n  fire(m,'offline',off,{title:'\\u25B2 OFFLINE \\u2014 '+m,subtitle:'sinds '+t,state:'alert',\n    rows:[{label:'MACHINE',value:'geen data > '+OFFLINE_MIN+' min',status:'high'}],footer:'SysDash \\u00b7 offline \\u00b7 '+t},\n    '\\u25B2 OFFLINE \\u2014 '+m+' \\u00b7 '+t);\n  if(off) continue; // rest alleen als 'ie online is\n  const disk=num(d.disk), temp=num(d.temp), up=d.net_up;\n  fire(m,'disk',!isNaN(disk)&&disk>=DISK_ALARM,{title:'\\u25B2 SCHIJF VOL \\u2014 '+m,subtitle:t,state:'alert',\n    rows:[{label:'SCHIJF',value:Math.round(disk)+'%',pct:disk,status:'high'}],footer:'SysDash \\u00b7 schijf \\u00b7 '+t},\n    '\\u25B2 SCHIJF VOL \\u2014 '+m+' \\u00b7 '+Math.round(disk)+'%');\n  fire(m,'temp',!isNaN(temp)&&temp>=TEMP_ALARM,{title:'\\u25B2 TE HEET \\u2014 '+m,subtitle:t,state:'alert',\n    rows:[{label:'TEMP',value:Math.round(temp)+'\\u00b0C',status:'high'}],footer:'SysDash \\u00b7 temp \\u00b7 '+t},\n    '\\u25B2 TE HEET \\u2014 '+m+' \\u00b7 '+Math.round(temp)+'\\u00b0C');\n  fire(m,'net',up===false,{title:'\\u25B2 GEEN INTERNET \\u2014 '+m,subtitle:t,state:'alert',\n    rows:[{label:'NETWERK',value:'geen verbinding',status:'high'}],footer:'SysDash \\u00b7 netwerk \\u00b7 '+t},\n    '\\u25B2 GEEN INTERNET \\u2014 '+m+' \\u00b7 '+t);\n}\nreturn out;\n"
-      },
-      "id": "n-code",
-      "name": "Alerts bouwen",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        440,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "http://127.0.0.1:7071/card",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify($json.spec) }}",
-        "options": {
-          "response": {
-            "response": {
-              "responseFormat": "file"
-            }
-          }
-        }
-      },
-      "id": "n-render",
-      "name": "Kaart renderen",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        660,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{ $vars.DISCORD_WEBHOOK }}",
-        "sendBody": true,
-        "contentType": "multipart-form-data",
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "payload_json",
-              "value": "={{ JSON.stringify({ content: $('Alerts bouwen').item.json.caption, username: 'SysDash' }) }}"
+    "name": "SysDash Alerts",
+    "nodes": [
+        {
+            "parameters": {
+                "rule": {
+                    "interval": [
+                        {
+                            "field": "cronExpression",
+                            "expression": "*/2 * * * *"
+                        }
+                    ]
+                }
             },
-            {
-              "parameterType": "formBinaryData",
-              "name": "files[0]",
-              "inputDataFieldName": "data"
-            }
-          ]
+            "id": "n-sched",
+            "name": "Schema",
+            "type": "n8n-nodes-base.scheduleTrigger",
+            "typeVersion": 1.2,
+            "position": [
+                0,
+                0
+            ]
         },
-        "options": {}
-      },
-      "id": "n-disc",
-      "name": "Naar Discord",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        880,
-        0
-      ]
+        {
+            "parameters": {
+                "operation": "getAll",
+                "tableId": "config",
+                "returnAll": true
+            },
+            "id": "n-cfg",
+            "name": "Config ophalen",
+            "type": "n8n-nodes-base.supabase",
+            "typeVersion": 1,
+            "position": [
+                220,
+                -120
+            ],
+            "credentials": {
+                "supabaseApi": {
+                    "id": "REPLACE_ME",
+                    "name": "Supabase SysDash"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "operation": "getAll",
+                "tableId": "v_latest",
+                "returnAll": true
+            },
+            "id": "n-met",
+            "name": "Metrics ophalen",
+            "type": "n8n-nodes-base.supabase",
+            "typeVersion": 1,
+            "position": [
+                220,
+                0
+            ],
+            "credentials": {
+                "supabaseApi": {
+                    "id": "REPLACE_ME",
+                    "name": "Supabase SysDash"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "jsCode": "\nconst NOW = Date.now();\nconst cfg = (($('Config ophalen').all()[0]||{}).json)||{};\nconst TH  = (cfg.thresholds && cfg.thresholds.default) || {};\nconst OFFLINE_MIN = TH.offline_min ?? 10, UPD_MANY = TH.updates_many ?? 20;\nconst BAT_MIN = TH.bat_min ?? 15, DISK_WARN = TH.disk_warn ?? 80, DISK_ALARM = TH.disk_alarm ?? 90;\nconst TEMP_ALARM = TH.temp_alarm ?? 90, DISK_FORECAST_DAYS = TH.disk_forecast_days ?? 14;\nconst RAM_ALARM = TH.ram_alarm ?? 85, SWAP_ALARM = TH.swap_alarm ?? 50;\nconst num = v => (v==null||v==='')?NaN:Number(v);\nconst tms = r => Date.parse(r.ts);\nconst hhmm = () => new Date(NOW).toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Amsterdam'});\nconst asArr = v => Array.isArray(v)?v:(typeof v==='string'?(()=>{try{return JSON.parse(v)}catch(e){return null}})():null);\nconst rows = $input.all().map(i=>i.json);          // v_latest: 1 rij per machine\nconst online = rows.filter(r=>!isNaN(tms(r)) && (NOW-tms(r))/60000 <= OFFLINE_MIN);\nconst label = m => (m||'?');\nconst culprit = procs => { const arr=asArr(procs)||[]; if(!arr||!arr.length) return null; const top=arr.slice().sort((a,b)=>(b.cpu||0)-(a.cpu||0))[0]; return (top && top.name) || null; };\nconst culpritMem = procs => { const arr=asArr(procs)||[]; if(!arr||!arr.length) return null; const top=arr.slice().sort((a,b)=>(b.mem||0)-(a.mem||0))[0]; return (top && top.name) ? (top.name+' ('+top.mem+'% RAM)') : null; };\n\nconst t=hhmm(); const store=$getWorkflowStaticData('global'); store.a=store.a||{};\nconst out=[]; const t2=(m,k)=>m+':'+k;\nfunction fire(m,key,active,spec,caption){\n  const id=t2(m,key); const was=!!store.a[id];\n  if(active && !was){ store.a[id]=true; out.push({json:{caption,spec}}); }\n  else if(!active && was){ store.a[id]=false;\n    out.push({json:{caption:'\u2713 Opgelost \u2014 '+m+' \u00b7 '+t,\n      spec:{title:'\u2713 Opgelost \u2014 '+m,subtitle:t,state:'ok',\n        rows:[{label:key.toUpperCase(),value:'weer OK',status:'ok'}],footer:'SysDash \u00b7 hersteld \u00b7 '+t}}}); }\n}\n// per machine de vitale checks\nfor(const d of rows){\n  const m=label(d.machine); const off=isNaN(tms(d))||(NOW-tms(d))/60000>OFFLINE_MIN;\n  fire(m,'offline',off,{title:'\u25b2 OFFLINE \u2014 '+m,subtitle:'sinds '+t,state:'alert',\n    rows:[{label:'MACHINE',value:'geen data > '+OFFLINE_MIN+' min',status:'high'}],footer:'SysDash \u00b7 offline \u00b7 '+t},\n    '\u25b2 OFFLINE \u2014 '+m+' \u00b7 '+t);\n  if(off) continue; // rest alleen als 'ie online is\n  const disk=num(d.disk), temp=num(d.temp), up=d.net_up, mem=num(d.mem), swap=num(d.swap);\n  const ex = d.extra || {};\n\n  fire(m,'disk',!isNaN(disk)&&disk>=DISK_ALARM,{title:'\u25b2 SCHIJF VOL \u2014 '+m,subtitle:t,state:'alert',\n    rows:[{label:'SCHIJF',value:Math.round(disk)+'%',pct:disk,status:'high'}],footer:'SysDash \u00b7 schijf \u00b7 '+t},\n    '\u25b2 SCHIJF VOL \u2014 '+m+' \u00b7 '+Math.round(disk)+'%');\n\n  const tempCul = culprit(d.top_procs);\n  const tempRows = [{label:'TEMP',value:Math.round(temp)+'\u00b0C',status:'high'}];\n  if(tempCul) tempRows.push({label:'VEROORZAKER',value:tempCul,status:'warn'});\n  fire(m,'temp',!isNaN(temp)&&temp>=TEMP_ALARM,{title:'\u25b2 TE HEET \u2014 '+m,subtitle:t,state:'alert',\n    rows:tempRows,footer:'SysDash \u00b7 temp \u00b7 '+t},\n    '\u25b2 TE HEET \u2014 '+m+' \u00b7 '+Math.round(temp)+'\u00b0C'+(tempCul?(' \u00b7 '+tempCul):''));\n\n  fire(m,'net',up===false,{title:'\u25b2 GEEN INTERNET \u2014 '+m,subtitle:t,state:'alert',\n    rows:[{label:'NETWERK',value:'geen verbinding',status:'high'}],footer:'SysDash \u00b7 netwerk \u00b7 '+t},\n    '\u25b2 GEEN INTERNET \u2014 '+m+' \u00b7 '+t);\n\n  // trend: schijf loopt vol \u2014 lineaire prognose, door de agent zelf berekend uit zijn eigen historie\n  const daysLeft = num(ex.disk_days_left);\n  fire(m,'schijftrend',!isNaN(daysLeft)&&daysLeft<=DISK_FORECAST_DAYS,{title:'\u25cf Schijf loopt vol \u2014 '+m,subtitle:t,state:'ok',\n    rows:[{label:'PROGNOSE',value:'over ~'+Math.round(daysLeft)+' dagen vol',status:'warn'}],footer:'SysDash \u00b7 trend \u00b7 '+t},\n    '\u25cf Schijf loopt vol \u2014 '+m+' \u00b7 nog ~'+Math.round(daysLeft)+' dagen');\n\n  // trend: RAM \u00e9n swap allebei onder druk (thrashing) \u2014 bewust geen losse RAM-piek, dat is ruis\n  const memCul = culpritMem(ex.top_procs_mem);\n  const thrashRows = [{label:'RAM',value:Math.round(mem)+'%',status:'high'},{label:'SWAP',value:Math.round(swap)+'%',status:'high'}];\n  if(memCul) thrashRows.push({label:'VEROORZAKER',value:memCul,status:'warn'});\n  fire(m,'geheugen',!isNaN(mem)&&!isNaN(swap)&&mem>=RAM_ALARM&&swap>=SWAP_ALARM,{title:'\u25b2 RAM+SWAP VOL \u2014 '+m,subtitle:t,state:'alert',\n    rows:thrashRows,footer:'SysDash \u00b7 geheugen \u00b7 '+t},\n    '\u25b2 RAM+SWAP VOL \u2014 '+m+(memCul?(' \u00b7 '+memCul):''));\n}\nreturn out;\n"
+            },
+            "id": "n-code",
+            "name": "Alerts bouwen",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                440,
+                0
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "http://127.0.0.1:7071/card",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{ JSON.stringify($json.spec) }}",
+                "options": {
+                    "response": {
+                        "response": {
+                            "responseFormat": "file"
+                        }
+                    }
+                }
+            },
+            "id": "n-render",
+            "name": "Kaart renderen",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                660,
+                0
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "={{ $env.DISCORD_WEBHOOK }}",
+                "sendBody": true,
+                "contentType": "multipart-form-data",
+                "bodyParameters": {
+                    "parameters": [
+                        {
+                            "name": "payload_json",
+                            "value": "={{ JSON.stringify({ content: $('Alerts bouwen').item.json.caption, username: 'SysDash' }) }}"
+                        },
+                        {
+                            "parameterType": "formBinaryData",
+                            "name": "files[0]",
+                            "inputDataFieldName": "data"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "n-disc",
+            "name": "Naar Discord",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                880,
+                0
+            ]
+        }
+    ],
+    "pinData": {},
+    "connections": {
+        "Schema": {
+            "main": [
+                [
+                    {
+                        "node": "Config ophalen",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Config ophalen": {
+            "main": [
+                [
+                    {
+                        "node": "Metrics ophalen",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Metrics ophalen": {
+            "main": [
+                [
+                    {
+                        "node": "Alerts bouwen",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Alerts bouwen": {
+            "main": [
+                [
+                    {
+                        "node": "Kaart renderen",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Kaart renderen": {
+            "main": [
+                [
+                    {
+                        "node": "Naar Discord",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "active": false,
+    "settings": {
+        "executionOrder": "v1",
+        "timezone": "Europe/Amsterdam"
     }
-  ],
-  "pinData": {},
-  "connections": {
-    "Schema": {
-      "main": [
-        [
-          {
-            "node": "Config ophalen",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Config ophalen": {
-      "main": [
-        [
-          {
-            "node": "Metrics ophalen",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Metrics ophalen": {
-      "main": [
-        [
-          {
-            "node": "Alerts bouwen",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Alerts bouwen": {
-      "main": [
-        [
-          {
-            "node": "Kaart renderen",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Kaart renderen": {
-      "main": [
-        [
-          {
-            "node": "Naar Discord",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    }
-  },
-  "active": false,
-  "settings": {
-    "executionOrder": "v1",
-    "timezone": "Europe/Amsterdam"
-  }
 }

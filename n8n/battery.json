@@ -1,197 +1,197 @@
 {
-  "name": "SysDash Battery",
-  "nodes": [
-    {
-      "parameters": {
-        "rule": {
-          "interval": [
-            {
-              "field": "cronExpression",
-              "expression": "*/5 * * * *"
-            }
-          ]
-        }
-      },
-      "id": "n-sched",
-      "name": "Schema",
-      "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.2,
-      "position": [
-        0,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "operation": "getAll",
-        "tableId": "config",
-        "returnAll": true
-      },
-      "id": "n-cfg",
-      "name": "Config ophalen",
-      "type": "n8n-nodes-base.supabase",
-      "typeVersion": 1,
-      "position": [
-        220,
-        -120
-      ],
-      "credentials": {
-        "supabaseApi": {
-          "id": "REPLACE_ME",
-          "name": "Supabase SysDash"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "operation": "getAll",
-        "tableId": "v_latest",
-        "returnAll": true
-      },
-      "id": "n-met",
-      "name": "Metrics ophalen",
-      "type": "n8n-nodes-base.supabase",
-      "typeVersion": 1,
-      "position": [
-        220,
-        0
-      ],
-      "credentials": {
-        "supabaseApi": {
-          "id": "REPLACE_ME",
-          "name": "Supabase SysDash"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "jsCode": "\nconst NOW = Date.now();\nconst cfg = (($('Config ophalen').all()[0]||{}).json)||{};\nconst TH  = (cfg.thresholds && cfg.thresholds.default) || {};\nconst OFFLINE_MIN = TH.offline_min ?? 10, UPD_MANY = TH.updates_many ?? 20;\nconst BAT_MIN = TH.bat_min ?? 15, DISK_WARN = TH.disk_warn ?? 80, DISK_ALARM = TH.disk_alarm ?? 90;\nconst TEMP_ALARM = TH.temp_alarm ?? 90;\nconst num = v => (v==null||v==='')?NaN:Number(v);\nconst tms = r => Date.parse(r.ts);\nconst hhmm = () => new Date(NOW).toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Amsterdam'});\nconst asArr = v => Array.isArray(v)?v:(typeof v==='string'?(()=>{try{return JSON.parse(v)}catch(e){return null}})():null);\nconst rows = $input.all().map(i=>i.json);          // v_latest: 1 rij per machine\nconst online = rows.filter(r=>!isNaN(tms(r)) && (NOW-tms(r))/60000 <= OFFLINE_MIN);\nconst label = m => (m||'?');\n\nconst t=hhmm(); const store=$getWorkflowStaticData('global'); store.b=store.b||{};\nconst out=[];\nfor(const d of online){\n  const m=label(d.machine); const bat=num(d.battery); const plug=d.bat_plugged; const health=num(d.bat_health);\n  if(isNaN(bat)) continue;                       // geen accu (desktop)\n  const crit = plug===false && bat<BAT_MIN;\n  const id=m+':crit'; const was=!!store.b[id];\n  if(crit&&!was){store.b[id]=true;\n    out.push({json:{caption:'\\u26A0 Accu kritiek \\u2014 '+m+' \\u00b7 '+Math.round(bat)+'%',\n      spec:{title:'\\u26A0 Accu bijna leeg \\u2014 '+m,subtitle:'op accu \\u00b7 '+t,state:'alert',\n        rows:[{label:'ACCU',value:Math.round(bat)+'% op accu',pct:bat,status:'high'}],footer:'SysDash \\u00b7 onder '+BAT_MIN+'% \\u00b7 '+t}}});}\n  else if(!crit&&was){store.b[id]=false;\n    out.push({json:{caption:'\\u2713 Accu weer ok \\u2014 '+m,\n      spec:{title:'\\u2713 Accu hersteld \\u2014 '+m,subtitle:t,state:'ok',\n        rows:[{label:'ACCU',value:Math.round(bat)+'%'+(plug?' \\u00b7 aan stroom':''),status:'ok'}],footer:'SysDash \\u00b7 accu \\u00b7 '+t}}});}\n  // slijtage (Laag 2): eenmalig seintje als conditie < 30\n  if(!isNaN(health)&&health<30){const wid=m+':wear';if(!store.b[wid]){store.b[wid]=true;\n    out.push({json:{caption:'\\u25CF Accu-slijtage \\u2014 '+m+' \\u00b7 conditie '+Math.round(health)+'%',\n      spec:{title:'\\u25CF Accu versleten \\u2014 '+m,subtitle:t,state:'ok',\n        rows:[{label:'CONDITIE',value:Math.round(health)+'% van origineel',status:'warn'}],footer:'SysDash \\u00b7 accu-conditie \\u00b7 '+t}}});}}\n}\nreturn out;\n"
-      },
-      "id": "n-code",
-      "name": "Battery bouwen",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        440,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "http://127.0.0.1:7071/card",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify($json.spec) }}",
-        "options": {
-          "response": {
-            "response": {
-              "responseFormat": "file"
-            }
-          }
-        }
-      },
-      "id": "n-render",
-      "name": "Kaart renderen",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        660,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{ $vars.DISCORD_WEBHOOK }}",
-        "sendBody": true,
-        "contentType": "multipart-form-data",
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "payload_json",
-              "value": "={{ JSON.stringify({ content: $('Battery bouwen').item.json.caption, username: 'SysDash' }) }}"
+    "name": "SysDash Battery",
+    "nodes": [
+        {
+            "parameters": {
+                "rule": {
+                    "interval": [
+                        {
+                            "field": "cronExpression",
+                            "expression": "*/5 * * * *"
+                        }
+                    ]
+                }
             },
-            {
-              "parameterType": "formBinaryData",
-              "name": "files[0]",
-              "inputDataFieldName": "data"
-            }
-          ]
+            "id": "n-sched",
+            "name": "Schema",
+            "type": "n8n-nodes-base.scheduleTrigger",
+            "typeVersion": 1.2,
+            "position": [
+                0,
+                0
+            ]
         },
-        "options": {}
-      },
-      "id": "n-disc",
-      "name": "Naar Discord",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        880,
-        0
-      ]
+        {
+            "parameters": {
+                "operation": "getAll",
+                "tableId": "config",
+                "returnAll": true
+            },
+            "id": "n-cfg",
+            "name": "Config ophalen",
+            "type": "n8n-nodes-base.supabase",
+            "typeVersion": 1,
+            "position": [
+                220,
+                -120
+            ],
+            "credentials": {
+                "supabaseApi": {
+                    "id": "REPLACE_ME",
+                    "name": "Supabase SysDash"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "operation": "getAll",
+                "tableId": "v_latest",
+                "returnAll": true
+            },
+            "id": "n-met",
+            "name": "Metrics ophalen",
+            "type": "n8n-nodes-base.supabase",
+            "typeVersion": 1,
+            "position": [
+                220,
+                0
+            ],
+            "credentials": {
+                "supabaseApi": {
+                    "id": "REPLACE_ME",
+                    "name": "Supabase SysDash"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "jsCode": "\nconst NOW = Date.now();\nconst cfg = (($('Config ophalen').all()[0]||{}).json)||{};\nconst TH  = (cfg.thresholds && cfg.thresholds.default) || {};\nconst OFFLINE_MIN = TH.offline_min ?? 10, UPD_MANY = TH.updates_many ?? 20;\nconst BAT_MIN = TH.bat_min ?? 15, DISK_WARN = TH.disk_warn ?? 80, DISK_ALARM = TH.disk_alarm ?? 90;\nconst TEMP_ALARM = TH.temp_alarm ?? 90;\nconst num = v => (v==null||v==='')?NaN:Number(v);\nconst tms = r => Date.parse(r.ts);\nconst hhmm = () => new Date(NOW).toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Amsterdam'});\nconst asArr = v => Array.isArray(v)?v:(typeof v==='string'?(()=>{try{return JSON.parse(v)}catch(e){return null}})():null);\nconst rows = $input.all().map(i=>i.json);          // v_latest: 1 rij per machine\nconst online = rows.filter(r=>!isNaN(tms(r)) && (NOW-tms(r))/60000 <= OFFLINE_MIN);\nconst label = m => (m||'?');\n\nconst t=hhmm(); const store=$getWorkflowStaticData('global'); store.b=store.b||{};\nconst out=[];\nfor(const d of online){\n  const m=label(d.machine); const bat=num(d.battery); const plug=d.bat_plugged; const health=num(d.bat_health);\n  if(isNaN(bat)) continue;                       // geen accu (desktop)\n  const crit = plug===false && bat<BAT_MIN;\n  const id=m+':crit'; const was=!!store.b[id];\n  if(crit&&!was){store.b[id]=true;\n    out.push({json:{caption:'\\u26A0 Accu kritiek \\u2014 '+m+' \\u00b7 '+Math.round(bat)+'%',\n      spec:{title:'\\u26A0 Accu bijna leeg \\u2014 '+m,subtitle:'op accu \\u00b7 '+t,state:'alert',\n        rows:[{label:'ACCU',value:Math.round(bat)+'% op accu',pct:bat,status:'high'}],footer:'SysDash \\u00b7 onder '+BAT_MIN+'% \\u00b7 '+t}}});}\n  else if(!crit&&was){store.b[id]=false;\n    out.push({json:{caption:'\\u2713 Accu weer ok \\u2014 '+m,\n      spec:{title:'\\u2713 Accu hersteld \\u2014 '+m,subtitle:t,state:'ok',\n        rows:[{label:'ACCU',value:Math.round(bat)+'%'+(plug?' \\u00b7 aan stroom':''),status:'ok'}],footer:'SysDash \\u00b7 accu \\u00b7 '+t}}});}\n  // slijtage (Laag 2): eenmalig seintje als conditie < 30\n  if(!isNaN(health)&&health<30){const wid=m+':wear';if(!store.b[wid]){store.b[wid]=true;\n    out.push({json:{caption:'\\u25CF Accu-slijtage \\u2014 '+m+' \\u00b7 conditie '+Math.round(health)+'%',\n      spec:{title:'\\u25CF Accu versleten \\u2014 '+m,subtitle:t,state:'ok',\n        rows:[{label:'CONDITIE',value:Math.round(health)+'% van origineel',status:'warn'}],footer:'SysDash \\u00b7 accu-conditie \\u00b7 '+t}}});}}\n}\nreturn out;\n"
+            },
+            "id": "n-code",
+            "name": "Battery bouwen",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                440,
+                0
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "http://127.0.0.1:7071/card",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{ JSON.stringify($json.spec) }}",
+                "options": {
+                    "response": {
+                        "response": {
+                            "responseFormat": "file"
+                        }
+                    }
+                }
+            },
+            "id": "n-render",
+            "name": "Kaart renderen",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                660,
+                0
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "={{ $env.DISCORD_WEBHOOK }}",
+                "sendBody": true,
+                "contentType": "multipart-form-data",
+                "bodyParameters": {
+                    "parameters": [
+                        {
+                            "name": "payload_json",
+                            "value": "={{ JSON.stringify({ content: $('Battery bouwen').item.json.caption, username: 'SysDash' }) }}"
+                        },
+                        {
+                            "parameterType": "formBinaryData",
+                            "name": "files[0]",
+                            "inputDataFieldName": "data"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "n-disc",
+            "name": "Naar Discord",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                880,
+                0
+            ]
+        }
+    ],
+    "pinData": {},
+    "connections": {
+        "Schema": {
+            "main": [
+                [
+                    {
+                        "node": "Config ophalen",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Config ophalen": {
+            "main": [
+                [
+                    {
+                        "node": "Metrics ophalen",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Metrics ophalen": {
+            "main": [
+                [
+                    {
+                        "node": "Battery bouwen",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Battery bouwen": {
+            "main": [
+                [
+                    {
+                        "node": "Kaart renderen",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Kaart renderen": {
+            "main": [
+                [
+                    {
+                        "node": "Naar Discord",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "active": false,
+    "settings": {
+        "executionOrder": "v1",
+        "timezone": "Europe/Amsterdam"
     }
-  ],
-  "pinData": {},
-  "connections": {
-    "Schema": {
-      "main": [
-        [
-          {
-            "node": "Config ophalen",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Config ophalen": {
-      "main": [
-        [
-          {
-            "node": "Metrics ophalen",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Metrics ophalen": {
-      "main": [
-        [
-          {
-            "node": "Battery bouwen",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Battery bouwen": {
-      "main": [
-        [
-          {
-            "node": "Kaart renderen",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Kaart renderen": {
-      "main": [
-        [
-          {
-            "node": "Naar Discord",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    }
-  },
-  "active": false,
-  "settings": {
-    "executionOrder": "v1",
-    "timezone": "Europe/Amsterdam"
-  }
 }

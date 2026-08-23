@@ -1,0 +1,11 @@
+# SysDash actie-laag — Basis-modus (alleen kijken). MINIMALE rechten.
+# Installeer als /etc/sudoers.d/sysdash (installer doet dit met 'visudo -c' controle).
+# Vervang __USER__ door de SysDash-gebruiker.
+#
+# Basis-modus heeft geen zelf-herstel, geen opschoning, geen herstart-vanaf-dashboard — de ENIGE
+# toegestane actie is de vaste upgrade-routine naar Advanced-modus (zelf ook weer whitelist-only,
+# zie install/upgrade-to-advanced.sh). Zodra iemand upgradet, vervangt de upgrade-routine dit
+# bestand door het volledige actions/sudoers.example.
+__USER__ ALL=(root) NOPASSWD: \
+    /usr/bin/bash __DIR__/install/upgrade-to-advanced.sh, \
+    /usr/bin/systemctl restart sysdash-actions-gateway

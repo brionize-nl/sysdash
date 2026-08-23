@@ -1,0 +1,12 @@
+# SysDash 2x-daags overzicht — systemd unit. De installer vult __USER__ en __DIR__ in.
+[Unit]
+Description=SysDash 2x-daags overzicht (12u in 6x2u-blokken naar Discord)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=__USER__
+WorkingDirectory=__DIR__
+EnvironmentFile=__DIR__/.env
+ExecStart=/usr/bin/python3 __DIR__/overview/sysdash-overview.py

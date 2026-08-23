@@ -10,7 +10,7 @@ Gebruik:
   python3 agent.py --once     # één meting, dan stoppen
   python3 agent.py --dry-run  # meet + print JSON, pusht NIET (voor testen)
 """
-import os, sys, time, json, socket, glob, subprocess, urllib.request, urllib.error
+import os, sys, time, json, socket, glob, subprocess, datetime, urllib.request, urllib.error
 
 try:
     import psutil
@@ -261,15 +261,18 @@ def collect():
     cores = psutil.cpu_percent(interval=1.0, percpu=True)          # dit is ons ~1s venster
     cpu = round(sum(cores) / len(cores), 1) if cores else None
 
-    top = []
+    all_procs = []
     for p in procs:
         try:
-            top.append({"name": (p.info.get("name") or "?")[:24],
+            all_procs.append({"name": (p.info.get("name") or "?")[:24],
                         "cpu": round(p.cpu_percent(None) / NCPU, 1),
                         "mem": round(p.memory_percent(), 1)})
         except Exception:
             continue
-    top = sorted(top, key=lambda x: x["cpu"], reverse=True)[:5]
+    top = sorted(all_procs, key=lambda x: x["cpu"], reverse=True)[:5]
+    # aparte top-5 op geheugen: een RAM-vreter met weinig CPU staat anders niet in de lijst
+    # (nodig voor een betrouwbare "veroorzaker" bij een swap/RAM-alert)
+    top_mem = sorted(all_procs, key=lambda x: x["mem"], reverse=True)[:5]
 
     vm, sw = psutil.virtual_memory(), psutil.swap_memory()
     la = os.getloadavg() if hasattr(os, "getloadavg") else (None, None, None)
@@ -296,7 +299,8 @@ def collect():
         "updates": get_updates(),
         "uptime": int(time.time() - psutil.boot_time()),
         "top_procs": top or None,
-        "extra": {"updates_list": get_updates_list(), "reboot_required": reboot_required(), "hardware": hardware_info()},
+        "extra": {"updates_list": get_updates_list(), "reboot_required": reboot_required(),
+                  "top_procs_mem": top_mem or None, "disk_days_left": get_disk_forecast(root_disk)},
     }
     row.update(get_battery())
     # None-velden weglaten houdt de payload schoon (kolommen blijven NULL)
@@ -312,20 +316,79 @@ def _req(path, method, body=None, extra_headers=None):
     r = urllib.request.Request(url, data=data, method=method, headers=headers)
     return urllib.request.urlopen(r, timeout=10)
 
+_DISK_FC_CACHE = {"t": 0.0, "days": None}
+def get_disk_forecast(cur_disk):
+    """Lineaire trend: bij dit tempo over hoeveel dagen is de schijf vol?
+    Vergelijkt nu met ~7 dagen terug (eigen historie in Supabase). None bij te weinig
+    geschiedenis of een schijf die niet aan het vollopen is — geen loze cijfers."""
+    if cur_disk is None or not SUPABASE_URL or not SERVICE_KEY:
+        return None
+    now = time.time()
+    if now - _DISK_FC_CACHE["t"] < 1800:      # elke 30 min is vaak genoeg voor een trend
+        return _DISK_FC_CACHE["days"]
+    _DISK_FC_CACHE["t"] = now
+    try:
+        now_dt = datetime.datetime.now(datetime.timezone.utc)
+        since = (now_dt - datetime.timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%S")
+        r = _req(f"metrics?machine=eq.{MACHINE}&select=disk,ts&ts=lte.{since}&order=ts.desc&limit=1", "GET")
+        rows = json.loads(r.read().decode())
+        if not rows or rows[0].get("disk") is None:
+            _DISK_FC_CACHE["days"] = None; return None
+        old_disk = rows[0]["disk"]
+        old_dt = datetime.datetime.fromisoformat(rows[0]["ts"].replace("Z", "+00:00"))
+        elapsed_days = (now_dt - old_dt).total_seconds() / 86400
+        if elapsed_days < 1:
+            _DISK_FC_CACHE["days"] = None; return None
+        rate = (cur_disk - old_disk) / elapsed_days   # %-punten per dag
+        if rate <= 0.01:
+            _DISK_FC_CACHE["days"] = None; return None       # niet aan het vollopen
+        _DISK_FC_CACHE["days"] = max(0, round((100 - cur_disk) / rate, 1))
+    except Exception:
+        _DISK_FC_CACHE["days"] = None
+    return _DISK_FC_CACHE["days"]
+
 def push(row):
     _req("metrics", "POST", row, {"Prefer": "return=minimal"})
 
+_hw_last_pushed_ts = 0
+def push_hardware_if_changed():
+    # hardware verandert nooit tussen twee reboots — apart bijgewerkt op machines (1 rij),
+    # niet elke 30s dubbel meegestuurd in de groeiende metrics-tijdreeks. Alleen een write als
+    # hardware_info()'s eigen cache (1u) net vers is berekend, niet elke cyclus.
+    global _hw_last_pushed_ts
+    hw = hardware_info()
+    if hw and _hw_cache["ts"] != _hw_last_pushed_ts:
+        try:
+            _req(f"machines?machine=eq.{MACHINE}", "PATCH", {"hardware": hw}, {"Prefer": "return=minimal"})
+            _hw_last_pushed_ts = _hw_cache["ts"]
+        except Exception:
+            pass
+
 def touch_machine():
-    # last_seen bijwerken (best-effort, faalt stil als de rij nog niet bestaat)
+    # zelf-registrerend: upsert i.p.v. PATCH, zodat een nog nooit geziene machine gewoon een
+    # rij aanmaakt (met auto-gedetecteerde kind/has_battery) i.p.v. dat de PATCH stil faalt
+    # omdat de rij nog niet bestaat (was het geval bij elke nieuwe derde+ machine).
     try:
-        _req(f"machines?machine=eq.{MACHINE}", "PATCH",
-             {"last_seen": time.strftime("%Y-%m-%dT%H:%M:%S%z")}, {"Prefer": "return=minimal"})
+        fn = getattr(psutil, "sensors_battery", None)
+        has_battery = bool(fn and fn())
+        _req("machines?on_conflict=machine", "POST",
+             {"machine": MACHINE, "last_seen": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+              "has_battery": has_battery, "kind": "laptop" if has_battery else "desktop"},
+             {"Prefer": "resolution=merge-duplicates,return=minimal"})
     except Exception:
         pass
 
 # ─────────────────────────── main ───────────────────────────
 
 def collect_live():
+    # processen primen (voor CPU%), zelfde patroon als collect() — daarna het bestaande
+    # 0.4s-interval van de live-lus als meet-venster hergebruiken (geen extra latency).
+    # Was eerder op geheugen gesorteerd zónder cpu-veld: het net-paneel toont %CPU-balkjes,
+    # dus die klapten elke 2s leeg tot de volgende 30s-meting ze weer herstelde.
+    procs = list(psutil.process_iter(["name"]))
+    for p in procs:
+        try: p.cpu_percent(None)
+        except Exception: pass
     cores = psutil.cpu_percent(interval=0.4, percpu=True)
     cpu = round(sum(cores)/len(cores),1) if cores else None
     vm = psutil.virtual_memory()
@@ -333,11 +396,15 @@ def collect_live():
     row = {"machine": MACHINE, "cpu": cpu, "mem": round(vm.percent,1),
            "temp": primary_temp, "core_temps": core_temps,
            "cores": [round(c,1) for c in cores] if cores else None}
-    procs=[]
-    for pr in psutil.process_iter(["name"]):
-        try: procs.append({"name": (pr.info.get("name") or "?")[:24], "mem": round(pr.memory_percent(),1)})
-        except Exception: pass
-    row["top_procs"] = sorted(procs, key=lambda x:x["mem"], reverse=True)[:5]
+    top_procs = []
+    for p in procs:
+        try:
+            top_procs.append({"name": (p.info.get("name") or "?")[:24],
+                               "cpu": round(p.cpu_percent(None) / NCPU, 1),
+                               "mem": round(p.memory_percent(), 1)})
+        except Exception:
+            continue
+    row["top_procs"] = sorted(top_procs, key=lambda x: x["cpu"], reverse=True)[:5]
     try:
         f=psutil.cpu_freq(); row["freq"]=round(f.current) if f else None
     except Exception: pass
@@ -362,7 +429,7 @@ def one_cycle(dry):
         print(json.dumps(row, indent=2, ensure_ascii=False))
         return True
     try:
-        push(row); touch_machine()
+        touch_machine(); push_hardware_if_changed(); push(row)
         print(f"[{time.strftime('%H:%M:%S')}] gepusht: cpu={row.get('cpu')}% mem={row.get('mem')}% temp={row.get('temp')} machine={MACHINE}")
         return True
     except urllib.error.HTTPError as e:

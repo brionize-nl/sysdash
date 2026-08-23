@@ -1,0 +1,82 @@
+{
+    "name": "SysDash Heartbeat",
+    "nodes": [
+        {
+            "parameters": {
+                "rule": {
+                    "interval": [
+                        {
+                            "field": "cronExpression",
+                            "expression": "*/5 * * * *"
+                        }
+                    ]
+                }
+            },
+            "id": "n-sched",
+            "name": "Schema",
+            "type": "n8n-nodes-base.scheduleTrigger",
+            "typeVersion": 1.2,
+            "position": [
+                0,
+                0
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// Dead-man's-switch: alleen pingen als er een URL geconfigureerd is.\n// Ontbreekt HEALTHCHECK_PING_URL nog in .env? Dan doet deze stap niets\n// (geen foutmelding, gewoon een lege run) i.p.v. elke 5 min te falen.\nconst url = $env.HEALTHCHECK_PING_URL || '';\nif (!url) return [];\nreturn [{ json: { url } }];\n"
+            },
+            "id": "n-check",
+            "name": "URL check",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                224,
+                0
+            ]
+        },
+        {
+            "parameters": {
+                "url": "={{ $json.url }}",
+                "options": {}
+            },
+            "id": "n-ping",
+            "name": "Ping",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                448,
+                0
+            ]
+        }
+    ],
+    "pinData": {},
+    "connections": {
+        "Schema": {
+            "main": [
+                [
+                    {
+                        "node": "URL check",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "URL check": {
+            "main": [
+                [
+                    {
+                        "node": "Ping",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "active": true,
+    "settings": {
+        "executionOrder": "v1",
+        "timezone": "Europe/Amsterdam"
+    }
+}

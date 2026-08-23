@@ -1,4 +1,0 @@
-{
-  "_comment": "Agent leest secrets uit ../.env. Dit bestand is optioneel voor extra opties.",
-  "push_interval_sec": 30
-}

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SysDash v12 - RECON PROBE. Leest ALLEEN uit, verandert NIETS.
-# Draai dit op ELKE machine die je wil monitoren (delli5 EN pro) en plak de uitvoer terug.
+# Draai dit op ELKE machine die je wil monitoren en plak de uitvoer terug.
 # Het vertelt me wat de hardware/omgeving geeft, zodat ik de agent + installer foutloos bouw.
 #
 #   python3 probe.py

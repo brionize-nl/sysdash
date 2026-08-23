@@ -20,6 +20,9 @@ html,body{margin:0;background:var(--bg);color:var(--txt);font-family:var(--mono)
 @keyframes pulse{50%{opacity:.35}}
 .clock{font-family:var(--hud);font-size:16px;letter-spacing:2px;color:var(--cyan);text-align:right;line-height:1.1}
 .clock small{display:block;font-size:9px;color:var(--muted);font-family:var(--mono)}
+.topreboot{width:30px;height:30px;flex:none;border-radius:9px;cursor:pointer;font-size:14px;line-height:1;
+  color:var(--red);background:rgba(255,61,90,.06);border:1px solid rgba(255,61,90,.3);transition:all .2s ease}
+.topreboot:hover{color:#fff;background:rgba(255,61,90,.18);border-color:var(--red);box-shadow:0 0 12px -6px var(--red)}
 .tabs{display:flex;gap:8px;padding:0 20px;margin:0 16px 6px;flex-wrap:wrap}
 .tab{font-family:var(--hud);font-size:10px;letter-spacing:2px;padding:7px 14px;border-radius:9px;color:var(--muted);background:rgba(255,255,255,.02);border:1px solid rgba(140,190,235,.10);cursor:pointer}
 .tab.on{color:#eaf6ff;border-color:rgba(0,212,255,.5);background:rgba(0,212,255,.09);box-shadow:0 0 18px -6px var(--cyan)}
@@ -31,11 +34,16 @@ html,body{margin:0;background:var(--bg);color:var(--txt);font-family:var(--mono)
 .nstat .u{font-size:10px;color:var(--muted)}
 .procs{min-width:240px;border-left:1px solid var(--line);padding-left:18px}
 .procs .pt{font-family:var(--hud);font-size:9px;letter-spacing:2px;color:var(--muted);margin-bottom:9px}
-.prow{display:flex;align-items:center;gap:9px;margin:6px 0;font-size:11px}
+.prow{display:flex;align-items:center;gap:10px;margin:11px 0;font-size:11px}
 .prow .pn{width:96px;color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.prow .pb{flex:1;height:5px;border-radius:3px;background:rgba(120,180,230,.12);overflow:hidden}
-.prow .pf{height:100%;background:var(--cyan);box-shadow:0 0 6px var(--cyan)}
-.prow .pp{width:44px;text-align:right;color:var(--muted)}
+/* niveaumeter, zelfde taal als de CPU/RAM/SCHIJF-ringen bovenin (echte waarde/100, cyaan+gloed,
+   ronde uiteinden) — maar recht i.p.v. rond. Breedte-transitie zorgt dat 'm ook echt beweegt
+   zolang dezelfde rij hergebruikt wordt (zie updateProcRows() in app.js). */
+.prow .pb{flex:1;height:16px;border-radius:5px;background:rgba(90,150,200,.16);overflow:hidden}
+.prow .pf{display:block;height:100%;border-radius:5px;background:var(--cyan);box-shadow:0 0 10px var(--cyan);
+  transition:width 1.5s ease-in-out}
+@media (prefers-reduced-motion:reduce){.prow .pf{transition:none}}
+.prow .pp{width:36px;text-align:right;color:var(--muted)}
 .ok{color:var(--green)}.warn{color:var(--amber)}.hi{color:var(--red)}
 .instrument{margin:6px 16px;padding:6px 4px}
 .hero{margin:0;padding:20px 14px 16px}
@@ -149,6 +157,25 @@ html,body{margin:0;background:var(--bg);color:var(--txt);font-family:var(--mono)
 .pbtn.on{color:var(--cyan);border-color:rgba(0,212,255,.55);background:rgba(0,212,255,.08);box-shadow:0 0 12px -6px var(--cyan)}
 .pnow{font-family:var(--mono);font-size:10px;color:var(--muted)}
 
+/* BEHEER — herstart/opschonen (trede 2+3, via de Tailscale-only gateway) */
+.mgmtrow{display:flex;gap:6px;margin:4px 0 8px}
+.mgmtsel{flex:1;padding:8px 10px;border-radius:8px;font-family:var(--hud);font-size:10px;letter-spacing:1px;
+  color:var(--fg);background:rgba(10,20,32,.6);border:1px solid rgba(140,190,235,.16)}
+.mgmtbtn{padding:8px 12px;border-radius:8px;cursor:pointer;font-family:var(--hud);font-size:10px;letter-spacing:1px;
+  color:var(--muted);background:rgba(10,20,32,.5);border:1px solid rgba(140,190,235,.16);transition:all .2s ease;white-space:nowrap}
+.mgmtbtn:hover{color:var(--fg);border-color:rgba(0,212,255,.4)}
+.mgmtbtn.wide{flex:1;white-space:normal;line-height:1.3}
+.mgmtbtn.subtle{opacity:.55;font-size:9px}
+.mgmtbtn.subtle:hover{opacity:1}
+.downgraderow{margin-top:10px}
+.upgradetxt{font-size:12px;line-height:1.5;color:var(--muted);margin:0 0 10px}
+.ph.small{margin-top:10px;margin-bottom:6px;opacity:.7}
+.actionlog{display:flex;flex-direction:column;gap:4px}
+.alrow{display:flex;justify-content:space-between;font-family:var(--mono);font-size:10px;color:var(--muted)}
+.alrow.ok span:first-child{color:var(--green)}
+.alrow.fout span:first-child{color:var(--red)}
+.alrow .alt{opacity:.6}
+
 /* GB-subtekst onder RAM/schijf-ring */
 .rsub{text-align:center;font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:2px}
 
@@ -167,3 +194,53 @@ html,body{margin:0;background:var(--bg);color:var(--txt);font-family:var(--mono)
 .ulg{display:inline-flex;align-items:center;gap:4px}
 .ulg.rood{color:#ff7a7a}
 .ulg.blauw{color:#5fd8ff}
+
+/* SECTIE-TABS (22 aug, sparren): Overzicht/Systeem/Beheer/Historie vervangen de platte
+   "alles-in-1x"-indeling — telemetrie en acties stonden eerst door elkaar in dezelfde cockpit. */
+.sectiontabs{display:flex;gap:6px;padding:4px;border-radius:12px;margin:0 16px 10px;
+  background:rgba(255,255,255,.02);border:1px solid rgba(140,190,235,.08)}
+.stab{flex:1;text-align:center;font-family:var(--hud);font-size:10px;letter-spacing:1.8px;padding:9px 4px;
+  border-radius:9px;color:var(--muted);cursor:pointer;transition:all .15s ease;-webkit-user-select:none;user-select:none}
+.stab.on{color:#eaf6ff;background:rgba(0,212,255,.10);box-shadow:0 0 14px -6px var(--cyan)}
+.stab.beheer.on{color:#fff0d8;background:rgba(255,195,0,.12);box-shadow:0 0 14px -6px var(--amber)}
+.panel{display:none}
+.panel.on{display:block}
+/* BEHEER-tab (energie + beheer): 2 items i.p.v. de 6-panelen-.cgrid van SYSTEEM, dus eigen grid.
+   Mobiel-eerst gestapeld (telefoon rechtop is de primaire manier waarop dit bekeken wordt); de
+   brede-scherm-override staat daarom BEWUST helemaal onderaan dit bestand — anders wint een
+   eerdere basisregel alsnog, ook al klopt de media-conditie (cascade-volgorde, niet specificiteit). */
+.beheergrid{display:grid;grid-template-columns:1fr;gap:14px}
+
+/* ℹ info-knop: korte uitleg op aanvraag i.p.v. permanente tekst in de UI (vaste technische tekst in de UI oogde niet professioneel) */
+.panelinfo{display:flex;justify-content:flex-end;margin:0 16px 8px}
+.infobtn{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;
+  font-family:var(--hud);font-style:normal;font-size:11px;color:var(--muted);
+  border:1px solid rgba(140,190,235,.3);background:rgba(255,255,255,.03);cursor:pointer;flex:none}
+.infobtn:hover{color:var(--fg);border-color:rgba(0,212,255,.4)}
+.infopop{display:none;margin:-2px 16px 10px;padding:10px 13px;border-radius:9px;font-size:11px;line-height:1.6;
+  color:var(--muted);background:rgba(255,255,255,.02);border:1px solid rgba(140,190,235,.10)}
+.infopop.on{display:block}
+.infopop b{color:var(--fg);font-weight:600}
+.infopop code{font-size:10px;background:rgba(140,190,235,.1);padding:1px 4px;border-radius:4px}
+
+/* eigen dropdown i.p.v. de kale OS-standaard <select> — de native optielijst is met CSS niet te
+   stylen (zag er "gewoon Linux-default" uit), dus vervangen door een eigen knop + lijst in
+   dezelfde stijl als de rest van SysDash */
+.mgmtdrop{position:relative;flex:1}
+.mgmtdropbtn{width:100%;text-align:left;padding:9px 10px;border-radius:8px;font-family:var(--hud);
+  font-size:9.5px;letter-spacing:.8px;color:var(--txt);background:rgba(10,20,32,.6);
+  border:1px solid rgba(140,190,235,.16);cursor:pointer;display:flex;justify-content:space-between;align-items:center}
+.mgmtdropbtn:hover{border-color:rgba(0,212,255,.4)}
+.mgmtdropbtn .car{color:var(--muted);transition:transform .15s ease}
+.mgmtdrop.open .mgmtdropbtn .car{transform:rotate(180deg)}
+.mgmtdroplist{display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:20;
+  background:rgba(8,16,26,.97);border:1px solid rgba(140,190,235,.25);border-radius:9px;
+  box-shadow:0 8px 30px -8px rgba(0,0,0,.7);overflow:hidden}
+.mgmtdrop.open .mgmtdroplist{display:block}
+.mgmtdropitem{padding:9px 12px;font-family:var(--hud);font-size:9.5px;letter-spacing:.8px;color:var(--txt);cursor:pointer}
+.mgmtdropitem:hover{background:rgba(0,212,255,.08)}
+.mgmtdropitem.on{color:var(--cyan)}
+
+@media (min-width:700px){
+  .beheergrid{grid-template-columns:1fr 1fr}
+}

@@ -202,7 +202,7 @@ def main():
             "    h=pg.evaluate(\"document.body.scrollHeight\"); pg.set_viewport_size({\"width\":520,\"height\":h}); pg.wait_for_timeout(200)\n"
             "    pg.screenshot(path=\"%s\", full_page=True); b.close()\n"
         ) % (html_path, png_path)
-        subprocess.run(["/home/asus/.venv/bin/python3","-c",render], check=True, timeout=90)
+        subprocess.run([sys.executable,"-c",render], check=True, timeout=90)
         if printonly:
             print("gerenderd:", png_path); continue
         content = "\U0001F4CA %s \u00b7 %s %s" % (lab, dagdeel, tod)

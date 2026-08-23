@@ -4,7 +4,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#020810">
 <title>SysDash</title>
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=10">
   <link rel="manifest" href="manifest.webmanifest">
   <meta name="theme-color" content="#020810">
   <meta name="mobile-web-app-capable" content="yes">
@@ -18,23 +18,64 @@
     <div class="bg"></div><div class="veil"></div>
     <header class="top glass" id="topbar"></header>
     <nav class="tabs" id="tabs"></nav>
+    <nav class="sectiontabs" id="sectiontabs">
+      <div class="stab" data-s="overzicht">OVERZICHT</div>
+      <div class="stab" data-s="systeem">SYSTEEM</div>
+      <div class="stab beheer" data-s="beheer">BEHEER</div>
+      <div class="stab" data-s="historie">HISTORIE</div>
+    </nav>
 
-    <div class="section">NETWERK &amp; ACTIVITEIT</div>
-    <div class="net glass" id="net"></div>
+    <section class="panel" data-panel="overzicht">
+      <div class="panelinfo"><button class="infobtn" data-info="overzicht" type="button" title="Wat is dit?">i</button></div>
+      <div class="infopop" data-infobox="overzicht">
+        Snelle blik: <b>CPU/RAM/schijf</b> nu, <b>updates/uptime/load</b>-status, en internetverbinding
+        + de zwaarste processen op dit moment. Alles hier is alleen aflezen &mdash; niets doet iets op de machine.
+      </div>
+      <div class="instrument glass"><div class="hero"><div class="rings" id="rings"></div></div></div>
+      <div class="chips" id="chips"></div>
+      <div class="net glass" id="net">
+        <div class="netgrid" id="netgrid"></div>
+        <div class="procs"><div class="pt">TOP PROCESSEN NU</div><div id="prowlist"></div></div>
+      </div>
+    </section>
 
-    <div class="section">SYSTEEM &mdash; ALTIJD ZICHTBAAR</div>
-    <div class="instrument glass">
-      <div class="hero"><div class="rings" id="rings"></div></div>
-      <div class="hr-div"></div>
+    <section class="panel" data-panel="systeem">
+      <div class="panelinfo"><button class="infobtn" data-info="systeem" type="button" title="Wat is dit?">i</button></div>
+      <div class="infopop" data-infobox="systeem">
+        Gedetailleerde telemetrie: belasting en temperatuur per processorkern, overige sensoren,
+        swap/klokfrequentie, schijfruimte per partitie, hardware-specificaties, en &mdash; als er ooit
+        een zware sessie was &mdash; een terugblik met piekwaarden en of de CPU toen throttlede. Alleen aflezen.
+      </div>
       <div class="cockpit"><div class="cgrid" id="cockpit"></div></div>
-    </div>
+    </section>
 
-    <div class="section">STATUS &mdash; TIK VOOR DETAIL</div>
-    <div class="chips" id="chips"></div>
+    <section class="panel" data-panel="beheer">
+      <div class="panelinfo"><button class="infobtn" data-info="beheer" type="button" title="Wat is dit?">i</button></div>
+      <div class="infopop" data-infobox="beheer">
+        Deze tegels doen iets op de machine &mdash; anders dan Overzicht/Systeem, die alleen aflezen.
+        <b>Herstart</b>: start de gekozen SysDash-dienst opnieuw op.
+        <b>Veilig opschonen</b>: <code>apt autoremove</code> + <code>apt clean</code> + oude logs opruimen.
+        <b>Hele PC herstarten</b> (knop rechtsboven): herstart de complete machine, niet alleen een dienst &mdash; vraagt een extra bevestiging.
+      </div>
+      <div class="cockpit"><div class="beheergrid" id="beheerpanel"></div></div>
+    </section>
 
-    <div class="hist glass" id="hist"></div>
+    <section class="panel" data-panel="historie">
+      <div class="panelinfo"><button class="infobtn" data-info="historie" type="button" title="Wat is dit?">i</button></div>
+      <div class="infopop" data-infobox="historie">
+        De laatste ~120 metingen (elke 30s, dus ruwweg het afgelopen uur) als grafiek. Schakel tussen
+        CPU/temperatuur/accu/netwerk-download met de knoppen rechtsboven in de grafiek.
+      </div>
+      <div class="hist glass" id="hist"></div>
+    </section>
+
     <div class="foot" id="foot"></div>
   </div>
-  <script src="config.js"></script>
-  <script src="app.js"></script>
+  <!-- BELANGRIJK: ?v=N hier én bij style.css hierboven ophogen bij elke wijziging aan die
+       bestanden. Een script-tag zonder query-string is een APARTE cache-entry t.o.v. index.html
+       zelf — een cache-buster op index.html (of zelfs sw.js's CACHE_VERSION) bust die dus NIET
+       automatisch mee. Zonder dit kan de browser stilletjes een oude app.js/style.css blijven
+       serveren terwijl index.html al wel vers is (kostte een lang debug-traject, 22 aug). -->
+  <script src="config.js?v=10"></script>
+  <script src="app.js?v=10"></script>
 </body></html>

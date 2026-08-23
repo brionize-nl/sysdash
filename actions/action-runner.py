@@ -55,10 +55,12 @@ def audit(msg):
 
 
 # ── Supabase-kanaal voor app-gestuurde acties (WHITELIST-bewaakt) ──
+# Service-key (niet anon): deze daemon PATCHt applied_profile terug, en machine_actions
+# is sinds de RLS-fix niet meer anon-schrijfbaar (zie db/schema.sql).
 def _cfg(key):
     return os.environ.get(key, "")
 SUPA_URL = _cfg("SUPABASE_URL")
-SUPA_KEY = _cfg("SUPABASE_ANON_KEY")
+SUPA_KEY = _cfg("SUPABASE_SERVICE_KEY")
 MACHINE  = _cfg("MACHINE_NAME") or subprocess.run(["hostname"],capture_output=True,text=True).stdout.strip().lower()
 _last_profile = {"val": None}
 
@@ -104,7 +106,14 @@ def check_app_actions(dry):
         audit("app-actie toegepast: profiel -> %s (actief: %s)" % (want, cur))
 
 def systemd_active(unit):
+    # zelf-detecterend: niet elke machine heeft elke dienst (bv. render hoort alleen bij de hub,
+    # niet bij een agent-only laptop) — een dienst die hier niet geïnstalleerd is, laten we met
+    # rust i.p.v. 'm te blijven proberen te "herstellen".
     try:
+        load = subprocess.run(["systemctl", "show", unit, "--property=LoadState", "--value"],
+                               capture_output=True, text=True, timeout=8).stdout.strip()
+        if load in ("not-found", ""):
+            return None  # niet geïnstalleerd op deze machine → niet ons pakkie-an
         return subprocess.run(["systemctl", "is-active", "--quiet", unit], timeout=8).returncode == 0
     except Exception:
         return None  # onbekend (bv. geen systemd) → niet herstellen

@@ -1,0 +1,17 @@
+# SysDash actions-gateway (trede 2+3, Tailscale-only) — systemd. Installer vult __USER__/__DIR__ in.
+[Unit]
+Description=SysDash actions-gateway (opschoning + herstart vanaf het dashboard, Tailscale-only)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__DIR__
+EnvironmentFile=__DIR__/.env
+ExecStart=/usr/bin/python3 __DIR__/actions/actions-gateway.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

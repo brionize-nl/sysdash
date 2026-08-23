@@ -1,0 +1,12 @@
+# SysDash 2x-daags overzicht — timer. 08:00 en 20:00, 12u uit elkaar zodat
+# elk overzicht precies de voorgaande 12u in 6 blokken van 2u dekt (geen gat/overlap).
+[Unit]
+Description=SysDash 2x-daags overzicht — timer (08:00 + 20:00)
+
+[Timer]
+OnCalendar=*-*-* 08:00:00
+OnCalendar=*-*-* 20:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

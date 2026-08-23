@@ -1,0 +1,12 @@
+# SysDash veilige auto-update (met hold-respect) — systemd unit. Installer vult __DIR__ in.
+# Draait bewust als root (geen User=): apt-get/apt-mark/flatpak hebben systeembrede rechten nodig.
+[Unit]
+Description=SysDash veilige auto-update (met hold-respect)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=__DIR__
+EnvironmentFile=__DIR__/.env
+ExecStart=/bin/bash __DIR__/updater/sysdash-update.sh

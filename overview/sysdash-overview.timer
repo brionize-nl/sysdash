@@ -4,8 +4,8 @@
 Description=SysDash 2x-daags overzicht — timer (08:00 + 20:00)
 
 [Timer]
-OnCalendar=*-*-* 08:00:00
-OnCalendar=*-*-* 20:00:00
+OnCalendar=*-*-* 08:00:00 Europe/Amsterdam
+OnCalendar=*-*-* 20:00:00 Europe/Amsterdam
 Persistent=true
 
 [Install]

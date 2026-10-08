@@ -6,7 +6,5 @@ create table if not exists public.live (
   net_rx real, net_tx real
 );
 alter table public.live enable row level security;
-drop policy if exists read_live on public.live;
-create policy read_live on public.live for select to anon, authenticated using (true);
-grant select on public.live to anon, authenticated;
+revoke all on public.live from anon, authenticated;
 grant all on public.live to service_role;

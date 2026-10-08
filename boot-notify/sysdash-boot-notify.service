@@ -1,4 +1,5 @@
-# SysDash boot/shutdown-melding — systemd unit. Installer vult __USER__ en __DIR__ in.
+# Voorbeeld; gebruik de begeleide installer voor rollen, modi en rechten.
+# SysDash boot/shutdown-melding — systemd unit. Installer vult sysdash en /opt/sysdash in.
 [Unit]
 Description=SysDash boot/shutdown-melding naar Discord
 After=network-online.target
@@ -7,11 +8,11 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-User=__USER__
-WorkingDirectory=__DIR__
-EnvironmentFile=__DIR__/.env
-ExecStart=/bin/bash __DIR__/boot-notify/sysdash-boot-notify.sh up
-ExecStop=/bin/bash __DIR__/boot-notify/sysdash-boot-notify.sh down
+User=sysdash
+WorkingDirectory=/opt/sysdash
+EnvironmentFile=/etc/sysdash/sysdash.env
+ExecStart=/bin/bash /opt/sysdash/boot-notify/sysdash-boot-notify.sh up
+ExecStop=/bin/bash /opt/sysdash/boot-notify/sysdash-boot-notify.sh down
 
 [Install]
 WantedBy=multi-user.target

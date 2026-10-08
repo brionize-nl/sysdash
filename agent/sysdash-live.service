@@ -1,4 +1,5 @@
-# SysDash live-hartslag — systemd unit. Installer vult __USER__ en __DIR__ in.
+# Voorbeeld; gebruik de begeleide installer voor rollen, modi en rechten.
+# SysDash live-hartslag — systemd unit. Installer vult sysdash en /opt/sysdash in.
 [Unit]
 Description=SysDash live-hartslag (~2s)
 After=network-online.target
@@ -6,10 +7,10 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=__USER__
-WorkingDirectory=__DIR__
-EnvironmentFile=__DIR__/.env
-ExecStart=/usr/bin/python3 __DIR__/agent/agent.py --live
+User=sysdash
+WorkingDirectory=/opt/sysdash
+EnvironmentFile=/etc/sysdash/sysdash.env
+ExecStart=/opt/sysdash/.venv/bin/python /opt/sysdash/agent/agent.py --live
 Restart=on-failure
 RestartSec=10
 

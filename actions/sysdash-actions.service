@@ -1,14 +1,15 @@
-# SysDash actie-runner (zelf-herstel) — systemd. Installer vult __USER__/__DIR__ in.
+# Voorbeeld; gebruik de begeleide installer voor rollen, modi en rechten.
+# SysDash actie-runner (zelf-herstel) — systemd. Installer vult sysdash//opt/sysdash in.
 [Unit]
 Description=SysDash actie-runner (trede 1: zelf-herstel)
 After=network.target
 
 [Service]
 Type=simple
-User=__USER__
-WorkingDirectory=__DIR__
-EnvironmentFile=__DIR__/.env
-ExecStart=/usr/bin/python3 __DIR__/actions/action-runner.py
+User=sysdash
+WorkingDirectory=/opt/sysdash
+EnvironmentFile=/etc/sysdash/sysdash.env
+ExecStart=/opt/sysdash/.venv/bin/python /opt/sysdash/actions/action-runner.py
 Restart=on-failure
 RestartSec=15
 

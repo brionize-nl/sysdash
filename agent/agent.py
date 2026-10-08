@@ -18,23 +18,15 @@ except ImportError:
     sys.exit("psutil ontbreekt — installeer: pip3 install psutil  (of: sudo apt install python3-psutil)")
 
 # ─────────────────────────── config (.env) ───────────────────────────
-def load_env():
-    cfg = dict(os.environ)
-    here = os.path.dirname(os.path.abspath(__file__))
-    for path in (os.path.join(here, "..", ".env"), os.path.join(here, ".env"), os.path.expanduser("~/sysdash/.env")):
-        if os.path.isfile(path):
-            for ln in open(path):
-                ln = ln.strip()
-                if ln and not ln.startswith("#") and "=" in ln:
-                    k, v = ln.split("=", 1)
-                    cfg.setdefault(k.strip(), v.strip())
-            break
-    return cfg
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from common import load_env, utcnow, scoped_request
 
 CFG = load_env()
 SUPABASE_URL = (CFG.get("SUPABASE_URL") or "").rstrip("/")
-SERVICE_KEY  = CFG.get("SUPABASE_SERVICE_KEY") or ""
+SERVICE_KEY  = CFG.get("AGENT_TOKEN") or ""
 MACHINE      = CFG.get("MACHINE_NAME") or socket.gethostname().lower()
+import re
+if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", MACHINE): sys.exit("Ongeldige machinenaam")
 INTERVAL     = int(CFG.get("PUSH_INTERVAL_SEC") or 30)
 NCPU         = psutil.cpu_count() or 1
 
@@ -308,13 +300,7 @@ def collect():
 
 # ─────────────────────────── push naar Supabase ───────────────────────────
 def _req(path, method, body=None, extra_headers=None):
-    url = f"{SUPABASE_URL}/rest/v1/{path}"
-    headers = {"apikey": SERVICE_KEY, "Authorization": f"Bearer {SERVICE_KEY}",
-               "Content-Type": "application/json"}
-    if extra_headers: headers.update(extra_headers)
-    data = json.dumps(body).encode() if body is not None else None
-    r = urllib.request.Request(url, data=data, method=method, headers=headers)
-    return urllib.request.urlopen(r, timeout=10)
+    return scoped_request(CFG, path, method, body)
 
 _DISK_FC_CACHE = {"t": 0.0, "days": None}
 def get_disk_forecast(cur_disk):
@@ -364,6 +350,12 @@ def push_hardware_if_changed():
         except Exception:
             pass
 
+def get_tailscale_ip():
+    try:
+        from common import tailscale_ip
+        return tailscale_ip()
+    except Exception: return None
+
 def touch_machine():
     # zelf-registrerend: upsert i.p.v. PATCH, zodat een nog nooit geziene machine gewoon een
     # rij aanmaakt (met auto-gedetecteerde kind/has_battery) i.p.v. dat de PATCH stil faalt
@@ -372,8 +364,10 @@ def touch_machine():
         fn = getattr(psutil, "sensors_battery", None)
         has_battery = bool(fn and fn())
         _req("machines?on_conflict=machine", "POST",
-             {"machine": MACHINE, "last_seen": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-              "has_battery": has_battery, "kind": "laptop" if has_battery else "desktop"},
+             {"machine": MACHINE, "last_seen": utcnow(),
+              "has_battery": has_battery, "kind": "laptop" if has_battery else "desktop",
+              "tailscale_ip": get_tailscale_ip(), "os": "linux", "role": CFG.get("SYSDASH_ROLE", "agent"),
+              "capabilities": {"gateway": CFG.get("INSTALL_MODE")=="advanced", "live": True, "updates": CFG.get("ENABLE_UPDATES")=="true", "profiles": CFG.get("HAS_PROFILES")=="true" and CFG.get("INSTALL_MODE")=="advanced"}},
              {"Prefer": "resolution=merge-duplicates,return=minimal"})
     except Exception:
         pass
@@ -393,7 +387,7 @@ def collect_live():
     cpu = round(sum(cores)/len(cores),1) if cores else None
     vm = psutil.virtual_memory()
     primary_temp, core_temps, _ = get_temps()
-    row = {"machine": MACHINE, "cpu": cpu, "mem": round(vm.percent,1),
+    row = {"machine": MACHINE, "ts": utcnow(), "cpu": cpu, "mem": round(vm.percent,1),
            "temp": primary_temp, "core_temps": core_temps,
            "cores": [round(c,1) for c in cores] if cores else None}
     top_procs = []
@@ -444,10 +438,10 @@ def main():
     dry = "--dry-run" in sys.argv
     once = "--once" in sys.argv or dry
     if not dry and (not SUPABASE_URL or not SERVICE_KEY):
-        sys.exit("SUPABASE_URL en SUPABASE_SERVICE_KEY ontbreken (.env). Gebruik --dry-run om te testen.")
+        sys.exit("SUPABASE_URL en AGENT_TOKEN ontbreken (.env). Gebruik --dry-run om te testen.")
     print(f"SysDash agent · machine={MACHINE} · interval={INTERVAL}s · {'DRY-RUN' if dry else 'push naar '+SUPABASE_URL}", file=sys.stderr)
     if once:
-        one_cycle(dry); return
+        sys.exit(0 if one_cycle(dry) else 1)
     while True:
         t0 = time.time()
         one_cycle(False)

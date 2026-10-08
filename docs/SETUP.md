@@ -1,98 +1,56 @@
-# SysDash — Draaiboek (SETUP)
+# Technische installatie en migratie
 
-Van download tot draaiend systeem. De installer doet het meeste; jij vult de secrets in en zet,
-bij Advanced-modus, ook Supabase + n8n op. Nieuw in SysDash en nog nooit met die onderdelen
-gewerkt? Begin liever bij [`AAN_DE_SLAG.md`](AAN_DE_SLAG.md) — dat legt ook uit hoe je de
-benodigde accounts aanmaakt.
+## Ondersteunde opzet
 
-**Opzet:** één machine is de **hub** (dashboard-web + agent, en bij Advanced-modus ook n8n +
-render + actie-laag). Extra machines draaien alleen de agent (met of zonder actie-laag). Een
-telefoon of ander apparaat is puur kijker.
+Debian/Ubuntu + systemd, Python 3.12+, Tailscale en een dedicated Supabase-project. Code staat root-owned in `/opt/sysdash`, configuratie root-owned met groep `sysdash` in `/etc/sysdash/sysdash.env`. Services gebruiken de virtualenv in `/opt/sysdash/.venv`. Privileged helpers en hun padketen zijn niet beschrijfbaar door de servicegebruiker.
 
----
+## Bestaande installatie migreren
 
-## Wat je nodig hebt
+1. Maak een back-up van de database, lokale configuratie en de bestaande systemd/sudoers-bestanden. Gebruik eerst een testmachine en testproject.
+2. Voer `db/install.sql` uit in het dedicated SysDash-project en controleer de retentiejobs uit `db/retention.sql`.
+3. Start de nieuwe hub-installer vanuit de volledige nieuwe repositorymap. Gebruik desgewenst `--config /pad/naar/oude.env`; geef operators op en kies de gewenste rol/modus expliciet.
+4. De installer vervangt het oude `/etc/sudoers.d/sysdash` door rechten voor uitsluitend de nieuwe servicegebruiker en vaste root-owned helper. Oude SysDash-services, tunnel en timers worden eerst uitgeschakeld; alleen de gekozen nieuwe onderdelen worden weer gestart.
+5. Maak nieuwe individuele machineconfigs aan op de hub. Installeer alle extra agents opnieuw. Oude agents met service-keys kunnen de nieuwe RPC niet automatisch gebruiken; verwijder hun oude keys en overweeg rotatie van de oude gedeelde service-key na volledige migratie.
+6. Importeer de nieuwe workflows. Selecteer bij **iedere** Supabase-node de juiste credential; oude open policies mogen niet blijven bestaan. Voer het rapport handmatig uit en verifieer Discord voordat je heartbeat activeert.
+7. Controleer alle machines en de gekozen modus. Bewaar de back-up tot installatie- en gedragstests voltooid zijn.
 
-- Een Supabase-project — URL, **service-key**, **anon-key** (Project Settings → API).
-- *(Alleen voor Advanced-modus)* Een Discord-webhook.
-- Als je meerdere machines wilt: allemaal in hetzelfde (Tailscale-)netwerk voor de BEHEER-acties
-  en de dashboard-tunnel.
+Databaseprivacy is gewijzigd: het oude directe publieke anon-dashboard werkt niet met de nieuwe private policies. Er is in deze versie geen publieke-leesmodus. Dat is een expliciete veiligheidskeuze, geen transparante migratie zonder gedragseffect.
 
----
+## n8n en Discord
 
-## Stap 1 · Supabase klaarzetten (één keer)
-1. Open je Supabase-project → **SQL Editor**.
-2. Plak de inhoud van **`db/schema.sql`** (en `db/live.sql` voor de live-modus) en **Run**.
-3. Klaar: tabellen `machines · metrics · config · baselines` + view `v_latest` + RLS (web-app leest alleen).
+Importeer `n8n/report.json`, `alerts.json`, `battery.json`, `updates.json` en `heartbeat.json` in n8n. De workflows zijn gedeactiveerd bij import. Kies de Supabase-servicecredential in alle Supabase-nodes, inclusief de inventaris- en bezorgingsnodes. Gebruik daarin voor de geteste n8n 2.37.10 een **legacy service_role JWT**: deze connector zet de credential ook in een Bearer-header. De nieuwe `sb_secret_`-key wordt door SysDash zelf ondersteund, maar vereist een aangepaste n8n-credential/connector die uitsluitend `apikey` gebruikt.
 
-## Stap 2 · De hub installeren
-1. Zet de map `sysdash/` op je hoofdmachine (bijv. `~/Projecten/sysdash`).
-2. Terminal in die map: `./install/setup.sh`
-3. De installer vraagt je secrets (Supabase URL + service-key + anon-key) en een machine-naam, en
-   dan: **Basis (alleen kijken) of Advanced (kijken + sturen + meldingen)?** — zie
-   [`AAN_DE_SLAG.md`](AAN_DE_SLAG.md) voor het verschil. Bij Advanced vraagt 'm ook meteen om je
-   Discord-webhook.
-4. De installer zet daarna alles neer: dependencies (incl. Playwright + Chromium), Orbitron,
-   agent + dashboard-webserver (+ bij Advanced: render + actie-laag + 2x-daags overzicht),
-   systemd-diensten, sudoers, en machine-klaar.
-5. Aan het eind zie je het **dashboard-adres**: `http://<jouw-tailscale-ip>:9000`.
+- Stel `DISCORD_WEBHOOK` en `HEALTHCHECK_PING_URL` veilig in voor het n8n-proces.
+- Bij een lokale systemd-installatie kan `EnvironmentFile=/etc/sysdash/sysdash.env` de omgeving leveren. De systemd-manager leest dit bestand; geef de n8n-gebruiker niet onnodig leesrechten op alle configuratiebestanden.
+- Stel `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` in waar n8n anders `$env`-toegang blokkeert. Beperk toegang tot de n8n-editor tot beheerders.
+- Renderer draait op `127.0.0.1:7071`. Bij npm/systemd op de hub klopt dat direct.
+- Bij Docker gebruik je op Linux een bewust gekozen **host network** voor n8n, of bouw je een afzonderlijk gecontroleerde renderverbinding. In een gewone bridge-container is `127.0.0.1` de container zelf en werkt de huidige workflow-URL niet. Zet de renderer niet zomaar publiek open.
 
-**Later alsnog upgraden van Basis naar Advanced?** Geen terminal nodig — klik op het dashboard
-(tabblad BEHEER) op **"Upgrade naar Advanced"**. Downgraden kan andersom, ook met een knop.
+Test ieder workflowpad: alarm, herstel, meerdere machines, meerdere gelijktijdige meldingen, renderfout en Discord-fout. Een geslaagde import bewijst geen bezorging.
 
-## Stap 3 · n8n (alleen nodig voor Advanced-modus)
-1. Installeer n8n op dezelfde machine als de hub (via npm of Docker).
-2. n8n leest `DISCORD_WEBHOOK` uit dezelfde `.env` als de rest van SysDash — zet in `n8n.service`
-   `EnvironmentFile=<pad-naar-sysdash>/.env` (i.p.v. losse `Environment=`-regels met geheimen erin)
-   en `Environment=N8N_BLOCK_ENV_ACCESS_IN_NODE=false` (nodig zodat een Code-node `$env` mag lezen).
-3. In n8n:
-   - **Credential** "Supabase SysDash" (project-URL + **service-key**). Bij import selecteren in elke Supabase-node (placeholder `REPLACE_ME`).
-   - **Importeer** `n8n/report.json`, `alerts.json`, `battery.json`, `updates.json` en **publiceer** ze.
+## Heartbeat
 
-## Stap 3a · Dead-man's-switch (optioneel maar aanbevolen bij Advanced)
-Vangt het geval dat SysDash zélf (of n8n, of Supabase) onbereikbaar wordt — zonder dit blijft zo'n
-storing onzichtbaar, want de normale meldingen lopen via dezelfde keten die dan stuk is.
-1. Gratis account op [healthchecks.io](https://healthchecks.io) (extern, bewust niet iets van SysDash
-   zelf — moet buiten je eigen netwerk/stroom blijven werken).
-2. Eén check aanmaken, bv. "SysDash Heartbeat", **Period 10 min / Grace 10 min**.
-3. De ping-URL in `HEALTHCHECK_PING_URL` zetten (`.env`).
-4. **Importeer** `n8n/heartbeat.json` en **publiceer** 'm (pingt elke 5 min; leeg `.env`-veld = doet niets, geen foutmeldingen).
-5. `sudo systemctl restart n8n` — leest `.env` alleen bij opstarten in.
-6. Testen: `HEALTHCHECK_PING_URL` tijdelijk leegmaken + n8n herstarten + wachten tot Period+Grace
-   verstreken is → moet een "down"-mail geven. Waarde terugzetten + herstarten om te herstellen.
+De heartbeat controleert de inventaris, verse metingen, een werkende renderer en een in de database vastgelegde succesvolle Discord-rapportbezorging van maximaal 12 uur geleden. Daarna pas pingt hij de externe bewaker. Voer het eerste rapport handmatig uit; zonder eerste succesvolle bezorging blijft heartbeat bewust ongezond.
 
-## Stap 4 · Extra machine toevoegen (agent-only)
-1. Zet `sysdash/` op de extra machine.
-2. Terminal in die map: `./install/install-agent.sh`
-3. Vul Supabase URL + service-key + een machine-naam in.
+Maak extern een check met Period 10 minuten en Grace 10 minuten. Test onderbreking van Supabase, renderer, metingen en langdurige Discord-uitval. De bezorgingscontrole detecteert Discord-uitval pas wanneer het laatst bevestigde rapport ouder is dan 12 uur; dit is geen onmiddellijke bewaking van Discord. Een laptop die bewust offline is telt in de huidige inventaris ook als niet gezond; verwijder/retireer machines die niet meer bewaakt hoeven te worden.
 
-## Stap 5 · Controleren
-- **Dashboard**: het adres uit stap 2. Elke machine als eigen tab, live data, auto-refresh.
-- **Live-modus**: ~2s hartslag per machine, automatisch.
-- *(Advanced)* **Discord**: rapport-kaart + alerts bij drempel/verandering.
-- *(Advanced)* **2x-daags overzicht**: `sysdash-overview.timer` (08:00 + 20:00) → per machine een plaatje met 12u in 6 blokken van 2u + piek-veroorzaker (zwaarste proces).
-- *(Advanced)* **Zelf-herstel**: `sysdash-actions`. Log: `sysdash/actions/audit.log`.
+## Modus en updates
 
-## Stap 6 · Externe toegang op de telefoon
-**Standaard:** trycloudflare quick tunnel (draait als `sysdash-tunnel.service`) → een `https://<willekeurig>.trycloudflare.com`-adres. Echte https, wisselt alleen bij herstart. Geen login ervoor — wie de link heeft kan meekijken, maar bij Advanced-modus niet besturen (dat gaat alleen via het Tailscale-netwerk).
+Moduswijzigingen zijn lokale administratorhandelingen. Gebruik telkens expliciete `--role` en `--mode`. Updates staan uit tenzij `--enable-updates` is opgegeven. Basis bevat geen sudoacties, ook niet via een dashboardknop. Advanced geeft de servicegebruiker uitsluitend toegang tot `/usr/local/libexec/sysdash-action`, dat argumenten controleert en alleen vaste acties uitvoert.
 
-**Fullscreen-PWA (optioneel):** de bouwstenen zitten al in de pagina, maar een écht vaste, altijd-stabiele https-link vraagt een eigen domein. Zodra je dat hebt: een named Cloudflare Tunnel + optioneel Cloudflare Access (login) i.p.v. de wisselende trycloudflare-link.
+Gedeelde n8n-workflows worden door een moduswissel niet verwijderd of uitgezet: beheer hun publicatiestatus in n8n. De nieuwe installer activeert geen oude tunnel-/bootnotificaties. Stop oude losse n8n-configuraties zelf wanneer je meldingen wilt beëindigen.
 
----
+## Testen
 
-## Handige commando's
-```
-systemctl status sysdash-agent sysdash-render sysdash-actions sysdash-web sysdash-live sysdash-tunnel sysdash-boot-notify sysdash-overview.timer
-journalctl -u sysdash-agent -f          # live agent-log
-python3 agent/agent.py --dry-run        # test-meting (geen push)
-curl -s http://127.0.0.1:7071/health    # render leeft?
-sudo systemctl start|stop sysdash-live  # live-modus op een machine handmatig aan/uit
-python3 overview/sysdash-overview.py --print   # 2x-daags overzicht testen (rendert, post niet)
-sudo systemctl start sysdash-overview.service  # 2x-daags overzicht nu meteen posten
+```bash
+python3 -m venv work/test-venv
+work/test-venv/bin/pip install -r requirements.txt
+work/test-venv/bin/python -m unittest discover -s tests -v
+node tests/dashboard.cjs
+work/test-venv/bin/python -m playwright install chromium
+work/test-venv/bin/python tests/browser.py
 ```
 
-## Twee repo's — publiek + jouw eigen private versie
-- **Deze repo** — kale template, nul secrets, placeholder-config.
-- **Jouw eigen fork/kopie** (private aanbevolen) — `.env` ingevuld, jouw machines/drempels,
-  `docs/PROGRESS.md` met je eigen voortgangslogboek. `git clone` hiervan om een machine (opnieuw)
-  op te zetten.
+Database-tests draaien in CI met een lege PostgreSQL-instance. De tests controleren onder andere tokenbinding, geweigerde directe anon-reads/writes en het verwijderen van een oude permissieve policy bij een herhaalde migratie. Gebruik `tests/database.sql` uitsluitend op testdata.
+
+De installer is nog niet end-to-end uitgevoerd op een schone echte Linux-VM, en de PowerShell-installer nog niet op echte Windows. Zie VALIDATION.md. Voer die praktijktests uit voordat je deze branch over productie uitrolt.

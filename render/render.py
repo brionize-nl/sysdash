@@ -7,7 +7,7 @@ Endpoints:
   GET  /demo            → voorbeeldkaart (PNG)
   POST /card  (JSON spec) → PNG
 Bindt op 127.0.0.1 (alleen lokaal; n8n draait op dezelfde machine).
-Vereist: cairosvg  +  Orbitron-font (installer regelt beide).
+Vereist: CairoSVG en DejaVu Sans (installer regelt beide); Orbitron is optioneel.
 """
 import sys, json, math
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer

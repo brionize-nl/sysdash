@@ -1,197 +1,230 @@
 {
-    "name": "SysDash Updates",
-    "nodes": [
-        {
-            "parameters": {
-                "rule": {
-                    "interval": [
-                        {
-                            "field": "cronExpression",
-                            "expression": "*/10 * * * *"
-                        }
-                    ]
-                }
-            },
-            "id": "n-sched",
-            "name": "Schema",
-            "type": "n8n-nodes-base.scheduleTrigger",
-            "typeVersion": 1.2,
-            "position": [
-                0,
-                0
-            ]
-        },
-        {
-            "parameters": {
-                "operation": "getAll",
-                "tableId": "config",
-                "returnAll": true
-            },
-            "id": "n-cfg",
-            "name": "Config ophalen",
-            "type": "n8n-nodes-base.supabase",
-            "typeVersion": 1,
-            "position": [
-                220,
-                -120
-            ],
-            "credentials": {
-                "supabaseApi": {
-                    "id": "REPLACE_ME",
-                    "name": "Supabase SysDash"
-                }
+  "name": "SysDash Updates",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/10 * * * *"
             }
-        },
-        {
-            "parameters": {
-                "operation": "getAll",
-                "tableId": "v_latest",
-                "returnAll": true
-            },
-            "id": "n-met",
-            "name": "Metrics ophalen",
-            "type": "n8n-nodes-base.supabase",
-            "typeVersion": 1,
-            "position": [
-                220,
-                0
-            ],
-            "credentials": {
-                "supabaseApi": {
-                    "id": "REPLACE_ME",
-                    "name": "Supabase SysDash"
-                }
-            }
-        },
-        {
-            "parameters": {
-                "jsCode": "\nconst NOW = Date.now();\nconst cfg = (($('Config ophalen').all()[0]||{}).json)||{};\nconst TH  = (cfg.thresholds && cfg.thresholds.default) || {};\nconst OFFLINE_MIN = TH.offline_min ?? 10, UPD_MANY = TH.updates_many ?? 20;\nconst BAT_MIN = TH.bat_min ?? 15, DISK_WARN = TH.disk_warn ?? 80, DISK_ALARM = TH.disk_alarm ?? 90;\nconst TEMP_ALARM = TH.temp_alarm ?? 90;\nconst num = v => (v==null||v==='')?NaN:Number(v);\nconst tms = r => Date.parse(r.ts);\nconst hhmm = () => new Date(NOW).toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Amsterdam'});\nconst asArr = v => Array.isArray(v)?v:(typeof v==='string'?(()=>{try{return JSON.parse(v)}catch(e){return null}})():null);\nconst rows = $input.all().map(i=>i.json);          // v_latest: 1 rij per machine\nconst online = rows.filter(r=>!isNaN(tms(r)) && (NOW-tms(r))/60000 <= OFFLINE_MIN);\nconst label = m => (m||'?');\n\nconst t=hhmm(); const store=$getWorkflowStaticData('global'); store.u=store.u||{}; store.f=store.f||{};\nconst out=[];\nfunction fire(m,key,active,spec,caption){\n  const id=m+':'+key; const was=!!store.f[id];\n  if(active && !was){ store.f[id]=true; out.push({json:{caption,spec}}); }\n  else if(!active && was){ store.f[id]=false;\n    out.push({json:{caption:'\u2713 Opgelost \u2014 '+m+' \u00b7 '+t,\n      spec:{title:'\u2713 Opgelost \u2014 '+m,subtitle:t,state:'ok',\n        rows:[{label:key.toUpperCase(),value:'weer OK',status:'ok'}],footer:'SysDash \u00b7 updates \u00b7 '+t}}}); }\n}\nfor(const d of online){\n  const m=label(d.machine); const upd=num(d.updates); if(isNaN(upd)) continue;\n  const ex = d.extra || {};\n  const cat = upd<=0?'uptodate':(upd>UPD_MANY?'many':'some');\n  const prev = store.u[m];\n  if(prev===undefined){ store.u[m]=cat; }\n  else if(cat!==prev){ store.u[m]=cat;\n    if(cat==='uptodate'){\n      out.push({json:{caption:'\u2713 Up-to-date \u2014 '+m,\n        spec:{title:'\u2713 Alles bijgewerkt \u2014 '+m,subtitle:t,state:'ok',\n          rows:[{label:'UPDATES',value:'up-to-date',status:'ok'}],footer:'SysDash \u00b7 updates \u00b7 '+t}}});\n    } else {\n      const sym = cat==='many'?'\u26a0':'\u25cf'; const st = cat==='many'?'high':'warn';\n      out.push({json:{caption:sym+' Updates \u2014 '+m+' \u00b7 '+upd+' klaar',\n        spec:{title:sym+' Updates beschikbaar \u2014 '+m,subtitle:t,state: cat==='many'?'alert':'ok',\n          rows:[{label:'UPDATES',value:upd+' klaar',status:st}],footer:'SysDash \u00b7 updates \u00b7 '+t}}});\n    }\n  }\n\n  // herstart nodig (na een update) \u2014 eenmalig seintje, lost zichzelf op na de herstart\n  const reboot = !!ex.reboot_required;\n  fire(m,'herstart',reboot,{title:'\u25cf Herstart nodig \u2014 '+m,subtitle:t,state:'ok',\n    rows:[{label:'HERSTART',value:'nodig na update',status:'warn'}],footer:'SysDash \u00b7 herstart \u00b7 '+t},\n    '\u25cf Herstart nodig \u2014 '+m);\n\n  // beveiligingsupdates (\"risico: rood\") apart van het kale aantal \u2014 \u00e9\u00e9n rode update is dringender dan 15 gewone\n  const ul = asArr(ex.updates_list) || [];\n  const nrood = ul.filter(u=>u && u.risk==='rood').length;\n  fire(m,'risico',nrood>0,{title:'\u26a0 Beveiligingsupdate \u2014 '+m,subtitle:t,state:'alert',\n    rows:[{label:'RISICO',value:nrood+' rood klaar',status:'high'}],footer:'SysDash \u00b7 updates \u00b7 '+t},\n    '\u26a0 Beveiligingsupdate \u2014 '+m+' \u00b7 '+nrood+' rood');\n}\nreturn out;\n"
-            },
-            "id": "n-code",
-            "name": "Updates bouwen",
-            "type": "n8n-nodes-base.code",
-            "typeVersion": 2,
-            "position": [
-                440,
-                0
-            ]
-        },
-        {
-            "parameters": {
-                "method": "POST",
-                "url": "http://127.0.0.1:7071/card",
-                "sendBody": true,
-                "specifyBody": "json",
-                "jsonBody": "={{ JSON.stringify($json.spec) }}",
-                "options": {
-                    "response": {
-                        "response": {
-                            "responseFormat": "file"
-                        }
-                    }
-                }
-            },
-            "id": "n-render",
-            "name": "Kaart renderen",
-            "type": "n8n-nodes-base.httpRequest",
-            "typeVersion": 4.2,
-            "position": [
-                660,
-                0
-            ]
-        },
-        {
-            "parameters": {
-                "method": "POST",
-                "url": "={{ $env.DISCORD_WEBHOOK }}",
-                "sendBody": true,
-                "contentType": "multipart-form-data",
-                "bodyParameters": {
-                    "parameters": [
-                        {
-                            "name": "payload_json",
-                            "value": "={{ JSON.stringify({ content: $('Updates bouwen').item.json.caption, username: 'SysDash' }) }}"
-                        },
-                        {
-                            "parameterType": "formBinaryData",
-                            "name": "files[0]",
-                            "inputDataFieldName": "data"
-                        }
-                    ]
-                },
-                "options": {}
-            },
-            "id": "n-disc",
-            "name": "Naar Discord",
-            "type": "n8n-nodes-base.httpRequest",
-            "typeVersion": 4.2,
-            "position": [
-                880,
-                0
-            ]
+          ]
         }
-    ],
-    "pinData": {},
-    "connections": {
-        "Schema": {
-            "main": [
-                [
-                    {
-                        "node": "Config ophalen",
-                        "type": "main",
-                        "index": 0
-                    }
-                ]
-            ]
-        },
-        "Config ophalen": {
-            "main": [
-                [
-                    {
-                        "node": "Metrics ophalen",
-                        "type": "main",
-                        "index": 0
-                    }
-                ]
-            ]
-        },
-        "Metrics ophalen": {
-            "main": [
-                [
-                    {
-                        "node": "Updates bouwen",
-                        "type": "main",
-                        "index": 0
-                    }
-                ]
-            ]
-        },
-        "Updates bouwen": {
-            "main": [
-                [
-                    {
-                        "node": "Kaart renderen",
-                        "type": "main",
-                        "index": 0
-                    }
-                ]
-            ]
-        },
-        "Kaart renderen": {
-            "main": [
-                [
-                    {
-                        "node": "Naar Discord",
-                        "type": "main",
-                        "index": 0
-                    }
-                ]
-            ]
-        }
+      },
+      "id": "n-sched",
+      "name": "Schema",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
     },
-    "active": false,
-    "settings": {
-        "executionOrder": "v1",
-        "timezone": "Europe/Amsterdam"
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "config",
+        "returnAll": true
+      },
+      "id": "n-cfg",
+      "name": "Config ophalen",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        220,
+        -120
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_ME",
+          "name": "Supabase SysDash"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "v_latest",
+        "returnAll": true
+      },
+      "id": "n-met",
+      "name": "Metrics ophalen",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        220,
+        0
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_ME",
+          "name": "Supabase SysDash"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst NOW = Date.now();\nconst cfg = (($('Config ophalen').all()[0]||{}).json)||{};\nconst DEFAULT_TH = (cfg.thresholds && cfg.thresholds.default) || {};\nconst MACHINES = $('Machines ophalen').all().map(x=>x.json);\nconst TH = DEFAULT_TH;\nconst OFFLINE_MIN = TH.offline_min ?? 10, UPD_MANY = TH.updates_many ?? 20;\nconst BAT_MIN = TH.bat_min ?? 15, DISK_WARN = TH.disk_warn ?? 80, DISK_ALARM = TH.disk_alarm ?? 90;\nconst TEMP_ALARM = TH.temp_alarm ?? 90;\nconst num = v => (v==null||v==='')?NaN:Number(v);\nconst tms = r => Date.parse(r.ts);\nconst hhmm = () => new Date(NOW).toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Amsterdam'});\nconst asArr = v => Array.isArray(v)?v:(typeof v==='string'?(()=>{try{return JSON.parse(v)}catch(e){return null}})():null);\nconst latest = $input.all().map(i=>i.json);\nconst rows=MACHINES.map(m=>({...latest.find(r=>r.machine===m.machine),machine:m.machine,thresholds:m.thresholds}));          // v_latest: 1 rij per machine\nconst online = rows.filter(r=>!isNaN(tms(r)) && (NOW-tms(r))/60000 <= ({...DEFAULT_TH,...(r.thresholds||{})}.offline_min??10));\nconst label = m => (m||'?');\n\nconst t=hhmm(); const store=$getWorkflowStaticData('global'); store.u=store.u||{}; store.f=store.f||{};\nconst out=[];\nfunction fire(m,key,active,spec,caption){\n  const id=m+':'+key; const was=!!store.f[id];\n  if(active && !was){ store.f[id]=true; out.push({json:{caption,spec}}); }\n  else if(!active && was){ store.f[id]=false;\n    out.push({json:{caption:'✓ Opgelost — '+m+' · '+t,\n      spec:{title:'✓ Opgelost — '+m,subtitle:t,state:'ok',\n        rows:[{label:key.toUpperCase(),value:'weer OK',status:'ok'}],footer:'SysDash · updates · '+t}}}); }\n}\nfor(const d of online){\n  const T={...DEFAULT_TH,...(d.thresholds||{})};\n  const OFFLINE_MIN=T.offline_min??10,UPD_MANY=T.updates_many??20,BAT_MIN=T.bat_min??15,DISK_WARN=T.disk_warn??80,DISK_ALARM=T.disk_alarm??90,TEMP_ALARM=T.temp_alarm??90,DISK_FORECAST_DAYS=T.disk_forecast_days??14,RAM_ALARM=T.ram_alarm??85,SWAP_ALARM=T.swap_alarm??50;\n  const m=label(d.machine); const upd=num(d.updates); if(isNaN(upd)) continue;\n  const ex = d.extra || {};\n  const cat = upd<=0?'uptodate':(upd>UPD_MANY?'many':'some');\n  const prev = store.u[m];\n  if(prev===undefined){ store.u[m]=cat; }\n  else if(cat!==prev){ store.u[m]=cat;\n    if(cat==='uptodate'){\n      out.push({json:{caption:'✓ Up-to-date — '+m,\n        spec:{title:'✓ Alles bijgewerkt — '+m,subtitle:t,state:'ok',\n          rows:[{label:'UPDATES',value:'up-to-date',status:'ok'}],footer:'SysDash · updates · '+t}}});\n    } else {\n      const sym = cat==='many'?'⚠':'●'; const st = cat==='many'?'high':'warn';\n      out.push({json:{caption:sym+' Updates — '+m+' · '+upd+' klaar',\n        spec:{title:sym+' Updates beschikbaar — '+m,subtitle:t,state: cat==='many'?'alert':'ok',\n          rows:[{label:'UPDATES',value:upd+' klaar',status:st}],footer:'SysDash · updates · '+t}}});\n    }\n  }\n\n  // herstart nodig (na een update) — eenmalig seintje, lost zichzelf op na de herstart\n  const reboot = !!ex.reboot_required;\n  fire(m,'herstart',reboot,{title:'● Herstart nodig — '+m,subtitle:t,state:'ok',\n    rows:[{label:'HERSTART',value:'nodig na update',status:'warn'}],footer:'SysDash · herstart · '+t},\n    '● Herstart nodig — '+m);\n\n  // Kernel-/uitstelrisico (\"risico: rood\") apart van het kale aantal — één rode update is dringender dan 15 gewone\n  const ul = asArr(ex.updates_list) || [];\n  const nrood = ul.filter(u=>u && u.risk==='rood').length;\n  fire(m,'risico',nrood>0,{title:'⚠ Kernel/uitgestelde update — '+m,subtitle:t,state:'alert',\n    rows:[{label:'RISICO',value:nrood+' rood klaar',status:'high'}],footer:'SysDash · updates · '+t},\n    '⚠ Kernel/uitgestelde update — '+m+' · '+nrood+' rood');\n}\nreturn out;\n"
+      },
+      "id": "n-code",
+      "name": "Updates bouwen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:7071/card",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.spec) }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "n-render",
+      "name": "Kaart renderen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.DISCORD_WEBHOOK }}",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "payload_json",
+              "value": "={{ JSON.stringify({ content: $('Updates bouwen').item.json.caption, username: 'SysDash' }) }}"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "files[0]",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "n-disc",
+      "name": "Naar Discord",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "machines",
+        "returnAll": true
+      },
+      "id": "sysdash-machines-updates",
+      "name": "Machines ophalen",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        400,
+        0
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_ME",
+          "name": "Supabase SysDash"
+        }
+      }
     }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schema": {
+      "main": [
+        [
+          {
+            "node": "Config ophalen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config ophalen": {
+      "main": [
+        [
+          {
+            "node": "Machines ophalen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Metrics ophalen": {
+      "main": [
+        [
+          {
+            "node": "Updates bouwen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Updates bouwen": {
+      "main": [
+        [
+          {
+            "node": "Kaart renderen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kaart renderen": {
+      "main": [
+        [
+          {
+            "node": "Naar Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Machines ophalen": {
+      "main": [
+        [
+          {
+            "node": "Metrics ophalen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Amsterdam"
+  }
 }

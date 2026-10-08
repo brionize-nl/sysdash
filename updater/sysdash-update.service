@@ -1,4 +1,5 @@
-# SysDash veilige auto-update (met hold-respect) — systemd unit. Installer vult __DIR__ in.
+# Voorbeeld; gebruik de begeleide installer voor rollen, modi en rechten.
+# SysDash veilige auto-update (met hold-respect) — systemd unit. Installer vult /opt/sysdash in.
 # Draait bewust als root (geen User=): apt-get/apt-mark/flatpak hebben systeembrede rechten nodig.
 [Unit]
 Description=SysDash veilige auto-update (met hold-respect)
@@ -7,6 +8,6 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-WorkingDirectory=__DIR__
-EnvironmentFile=__DIR__/.env
-ExecStart=/bin/bash __DIR__/updater/sysdash-update.sh
+WorkingDirectory=/opt/sysdash
+EnvironmentFile=/etc/sysdash/sysdash.env
+ExecStart=/opt/sysdash/.venv/bin/python /opt/sysdash/updater/update.py

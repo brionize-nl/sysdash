@@ -1,10 +1,10 @@
 # SysDash auto-update — timer. Dagelijks 18:50, 10 min vóór het 19:00-rapport
-# (n8n report_cron), zodat dat rapport de update van diezelfde avond al meeneemt.
+# (n8n report_cron). Een langdurige update kan bij dat rapport nog lopen.
 [Unit]
 Description=SysDash auto-update timer (18:50, 10 min voor het 19:00-rapport)
 
 [Timer]
-OnCalendar=*-*-* 18:50:00
+OnCalendar=*-*-* 18:50:00 Europe/Amsterdam
 Persistent=true
 
 [Install]

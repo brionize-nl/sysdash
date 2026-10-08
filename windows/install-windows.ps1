@@ -1,3 +1,4 @@
+param([string]$ConfigPath = "")
 # SysDash v12 · Windows-agent-installer (LICHTE versie).
 # Zet alleen de kernmetingen neer (CPU/RAM/schijf/netwerk/accu/uptime) via Taakplanner.
 # Geen temperaturen/updates-telling/hardware-info/actie-laag — zie windows/README.md waarom.
@@ -20,47 +21,46 @@ Say "1. Python + psutil"
 $py = Get-Command python -ErrorAction SilentlyContinue
 if (-not $py) { DieMsg "Python niet gevonden. Installeer via https://python.org/downloads (vink 'Add to PATH' aan) en draai dit script opnieuw." }
 Ok "python gevonden: $($py.Source)"
-python -m pip install --quiet --upgrade psutil
+python -m pip install --quiet "psutil>=6.1,<8"
 if ($LASTEXITCODE -ne 0) { DieMsg "psutil installeren mislukt" }
 Ok "psutil geïnstalleerd"
 
 Say "2. Secrets (.env)"
 $envPath = Join-Path $Dir ".env"
-if (-not (Test-Path $envPath)) {
-    Copy-Item (Join-Path $Dir ".env.example") $envPath
-    $url = Read-Host "  Supabase URL"
-    $key = Read-Host "  Supabase SERVICE key"
-    $def = $env:COMPUTERNAME.ToLower()
-    $name = Read-Host "  Machine-naam [$def]"
-    if ([string]::IsNullOrWhiteSpace($name)) { $name = $def }
-    (Get-Content $envPath) `
-        -replace '^SUPABASE_URL=.*', "SUPABASE_URL=$url" `
-        -replace '^SUPABASE_SERVICE_KEY=.*', "SUPABASE_SERVICE_KEY=$key" `
-        -replace '^MACHINE_NAME=.*', "MACHINE_NAME=$name" `
-        | Set-Content $envPath
-    Ok ".env ingevuld"
-} else { Ok ".env bestaat al (overslaan — pas handmatig aan indien nodig)" }
+if ($ConfigPath) { Copy-Item -LiteralPath $ConfigPath -Destination $envPath -Force }
+if (-not (Test-Path $envPath)) { DieMsg "Maak op de hub een machineconfig met create-agent.py en geef die op met -ConfigPath. Geen service-key op Windows gebruiken." }
+# Restrict secrets to this user; inherited broad access is removed.
+$acl = New-Object System.Security.AccessControl.FileSecurity
+$acl.SetAccessRuleProtection($true, $false)
+$identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+$acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($identity,"FullControl","Allow")))
+$acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule("SYSTEM","FullControl","Allow")))
+Set-Acl -LiteralPath $envPath -AclObject $acl
+Ok "Machineconfig aanwezig en privé"
 
 Say "3. Test-meting (--dry-run, pusht nog niks)"
 python (Join-Path $Dir "agent_windows.py") --dry-run
 if ($LASTEXITCODE -ne 0) { DieMsg "test-meting mislukt — check python/psutil hierboven" }
 Ok "meting werkt"
+python (Join-Path $Dir "agent_windows.py") --once
+if ($LASTEXITCODE -ne 0) { DieMsg "Eerste push mislukt; taak is niet geïnstalleerd." }
+Ok "Eerste meting ontvangen"
 
 Say "4. Taakplanner-taak registreren (start bij inloggen, herstart zelf bij een crash)"
 $taskName = "SysDash-Agent"
-$pythonw = (Get-Command pythonw -ErrorAction SilentlyContinue).Source
-if (-not $pythonw) { $pythonw = $py.Source }  # fallback: gewone python.exe (kort schermpje bij opstarten)
+$pythonwCommand = Get-Command pythonw -ErrorAction SilentlyContinue
+$pythonw = if ($pythonwCommand) { $pythonwCommand.Source } else { $py.Source }  # fallback: gewone python.exe (kort schermpje bij opstarten)
 $action  = New-ScheduledTaskAction -Execute $pythonw -Argument "`"$Dir\agent_windows.py`"" -WorkingDirectory $Dir
 $trigger = New-ScheduledTaskTrigger -AtLogOn
 $settings = New-ScheduledTaskSettingsSet -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
-    -ExecutionTimeLimit ([TimeSpan]::Zero) -DontStopOnIdleEnd -StartWhenAvailable
-Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings `
+    -ExecutionTimeLimit ([TimeSpan]::Zero) -DontStopOnIdleEnd -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew
+Register-ScheduledTask -Force -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings `
     -Description "SysDash Windows-agent (licht) — pusht metingen naar Supabase" | Out-Null
 Start-ScheduledTask -TaskName $taskName
 Start-Sleep -Seconds 2
 $state = (Get-ScheduledTask -TaskName $taskName).State
-Ok "taak '$taskName' geregistreerd en gestart (status: $state)"
+if ($state -ne "Running") { DieMsg "Taak niet actief; controleer Taakplanner." }
+Ok "taak geregistreerd en actief"
 
 Write-Host ""
 Write-Host "════════════════════════════════════════════════"

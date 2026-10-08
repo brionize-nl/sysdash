@@ -1,4 +1,5 @@
-# SysDash Quick Tunnel — systemd unit. Installer vult __USER__ en __DIR__ in.
+# Voorbeeld; gebruik de begeleide installer voor rollen, modi en rechten.
+# SysDash Quick Tunnel — systemd unit. Installer vult sysdash en /opt/sysdash in.
 [Unit]
 Description=SysDash Quick Tunnel (https voor dashboard)
 After=network-online.target sysdash-web.service
@@ -6,10 +7,10 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=__USER__
-WorkingDirectory=__DIR__
-EnvironmentFile=__DIR__/.env
-ExecStart=/bin/bash __DIR__/tunnel/sysdash-tunnel.sh
+User=sysdash
+WorkingDirectory=/opt/sysdash
+EnvironmentFile=/etc/sysdash/sysdash.env
+ExecStart=/bin/bash /opt/sysdash/tunnel/sysdash-tunnel.sh
 Restart=on-failure
 RestartSec=15
 

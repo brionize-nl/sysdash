@@ -4,7 +4,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#020810">
 <title>SysDash</title>
-<link rel="stylesheet" href="style.css?v=10">
+<link rel="stylesheet" href="style.css?v=11">
   <link rel="manifest" href="manifest.webmanifest">
   <meta name="theme-color" content="#020810">
   <meta name="mobile-web-app-capable" content="yes">
@@ -17,6 +17,7 @@
   <div class="app">
     <div class="bg"></div><div class="veil"></div>
     <header class="top glass" id="topbar"></header>
+    <div id="refresh-status" class="panelinfo" role="status" hidden></div>
     <nav class="tabs" id="tabs"></nav>
     <nav class="sectiontabs" id="sectiontabs">
       <div class="stab" data-s="overzicht">OVERZICHT</div>
@@ -44,7 +45,7 @@
       <div class="infopop" data-infobox="systeem">
         Gedetailleerde telemetrie: belasting en temperatuur per processorkern, overige sensoren,
         swap/klokfrequentie, schijfruimte per partitie, hardware-specificaties, en &mdash; als er ooit
-        een zware sessie was &mdash; een terugblik met piekwaarden en of de CPU toen throttlede. Alleen aflezen.
+        een zware sessie was &mdash; een terugblik met piekwaarden en hoe de klokfrequentie toen veranderde. Alleen aflezen.
       </div>
       <div class="cockpit"><div class="cgrid" id="cockpit"></div></div>
     </section>
@@ -54,7 +55,7 @@
       <div class="infopop" data-infobox="beheer">
         Deze tegels doen iets op de machine &mdash; anders dan Overzicht/Systeem, die alleen aflezen.
         <b>Herstart</b>: start de gekozen SysDash-dienst opnieuw op.
-        <b>Veilig opschonen</b>: <code>apt autoremove</code> + <code>apt clean</code> + oude logs opruimen.
+        <b>Veilig opschonen</b>: <code>apt clean</code> + oude logs opruimen.
         <b>Hele PC herstarten</b> (knop rechtsboven): herstart de complete machine, niet alleen een dienst &mdash; vraagt een extra bevestiging.
       </div>
       <div class="cockpit"><div class="beheergrid" id="beheerpanel"></div></div>
@@ -76,6 +77,6 @@
        zelf — een cache-buster op index.html (of zelfs sw.js's CACHE_VERSION) bust die dus NIET
        automatisch mee. Zonder dit kan de browser stilletjes een oude app.js/style.css blijven
        serveren terwijl index.html al wel vers is (kostte een lang debug-traject, 22 aug). -->
-  <script src="config.js?v=10"></script>
-  <script src="app.js?v=10"></script>
+  <script src="config.js?v=11"></script>
+  <script src="app.js?v=11"></script>
 </body></html>

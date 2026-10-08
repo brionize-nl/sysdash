@@ -1,11 +1,11 @@
 /* SysDash v12 · dashboard-brein
-   Leest Supabase (READ-ONLY anon-key), rendert het ontwerp met live data.
+   Leest de private hubproxy (alleen lezen), rendert het ontwerp met live data.
    Interactief: machine-tabs, detail-op-tik, historie-schakelaars, auto-refresh.
    Geen data ingesteld? → DEMO-modus (nep-data), zodat je 't kunt bekijken. */
 (() => {
 "use strict";
 const CFG = window.SYSDASH_CONFIG || {};
-const DEMO = !CFG.url || !CFG.anon;
+const DEMO = !CFG.apiBase && (!CFG.url || !CFG.anon);
 const RESTARTS = [["restart-web","Dashboard"],["restart-render","Kaarten"],["restart-agent","Meting"],["restart-live","Live-modus"],["restart-tunnel","Externe link"]];
 const SECTIONS = ["overzicht", "systeem", "beheer", "historie"];
 
@@ -82,8 +82,8 @@ let LIVE_TIMER = null;
 
 // ── Supabase REST ──
 async function api(path) {
-  const r = await fetch(`${CFG.url}/rest/v1/${path}`, {
-    headers: { apikey: CFG.anon, Authorization: `Bearer ${CFG.anon}` }
+  const r = await fetch(`${CFG.apiBase || CFG.url+"/rest/v1"}/${path}`, {
+    headers: CFG.apiBase ? {} : { apikey: CFG.anon, Authorization: `Bearer ${CFG.anon}` }
   });
   if (!r.ok) throw new Error(`Supabase ${r.status}`);
   return r.json();
@@ -100,6 +100,12 @@ async function loadCore() {
   STATE.machines = machines;
   STATE.latest = {}; latest.forEach(r => STATE.latest[r.machine] = r);
   STATE.cfg = (cfg[0] && cfg[0].thresholds && cfg[0].thresholds.default) || {};
+}
+
+async function paged(path) {
+ const result=[];let offset=0;
+ for (;;) { const rows=await api(path+`&limit=500&offset=${offset}`); if (!rows.length) break;result.push(...rows);offset+=rows.length; }
+ return result;
 }
 
 function holdWrite(machine, pkg, hold) {
@@ -143,14 +149,15 @@ function needsTailscaleHop(machine) {
   const mc = STATE.machines.find(x => x.machine === machine);
   const ip = mc && mc.tailscale_ip;
   if (!ip) return false;
-  location.href = `http://${ip}:9000${location.pathname}${location.search}`;
+  if (!CFG.hub) { alert("Hubadres ontbreekt"); return true; }
+  location.href = CFG.hub + location.pathname + "?machine=" + encodeURIComponent(machine);
   return true;
 }
 function callGateway(machine, path, body, onDone) {
   const url = gatewayUrl(machine, path);
   if (!url) { onDone(false, "geen Tailscale-IP bekend voor " + machine); return; }
-  const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 8000);
-  fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}), signal: ctl.signal })
+  const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 600000);
+  fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({...body, machine}), signal: ctl.signal })
     .then(r => r.json().then(j => ({ status: r.status, j })))
     .then(({ status, j }) => { clearTimeout(t); onDone(status === 200 && j.ok, j.detail || ""); })
     .catch(() => { clearTimeout(t); onDone(false, "niet bereikbaar — sta je op het Tailscale-netwerk?"); });
@@ -177,7 +184,7 @@ function doRestart(machine, service, label_) {
 
 function doCleanup(machine) {
   if (needsTailscaleHop(machine)) return;
-  if (!confirm(`${label(machine)} — veilige opschoning uitvoeren?\n(apt autoremove + apt clean + oude logs opruimen)`)) return;
+  if (!confirm(`${label(machine)} — veilige opschoning uitvoeren?\n(apt clean + oude logs opruimen)`)) return;
   callGateway(machine, "/cleanup", {}, (ok, detail) => {
     alert(ok ? "Opschoning gelukt." : `Opschoning mislukt: ${detail}`);
     loadActionLog().then(render);
@@ -198,9 +205,9 @@ function doReboot(machine) {
 }
 
 async function loadMode(machine) {
-  if (DEMO || !machine) { STATE.mode[machine] = "advanced"; STATE.hasWebhook[machine] = false; return; }
+  if (DEMO || !machine) { STATE.mode[machine] = DEMO ? "advanced" : "basis"; STATE.hasWebhook[machine] = false; return; }
   const url = gatewayUrl(machine, "/mode");
-  if (!url) { STATE.mode[machine] = "advanced"; STATE.hasWebhook[machine] = false; return; }
+  if (!url) { STATE.mode[machine] = DEMO ? "advanced" : "basis"; STATE.hasWebhook[machine] = false; return; }
   try {
     const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 4000);
     const r = await fetch(url, { signal: ctl.signal });
@@ -211,7 +218,7 @@ async function loadMode(machine) {
   } catch (e) {
     // onbereikbaar, of een oudere gateway zonder /mode-endpoint → aannemen dat het een bestaande,
     // van-vóór-dit-onderscheid volledige installatie is (zelfde default als de gateway zelf hanteert)
-    STATE.mode[machine] = "advanced";
+    STATE.mode[machine] = "unreachable";
     STATE.hasWebhook[machine] = false;
   }
 }
@@ -246,7 +253,7 @@ function doDowngrade(machine) {
 async function loadActionLog() {
   if (DEMO) { STATE.actionLog = []; return; }
   try {
-    STATE.actionLog = await api(`action_log?machine=eq.${STATE.active}&select=action,status,detail,ts&order=ts.desc&limit=5`);
+    STATE.actionLog = await api(`action_log?machine=eq.${encodeURIComponent(STATE.active)}&select=action,status,detail,ts&order=ts.desc&limit=5`);
   } catch (e) { STATE.actionLog = []; }
 }
 async function loadProfiles() {
@@ -261,7 +268,7 @@ async function loadProfiles() {
 async function loadHist() {
   const m = STATE.active; if (!m) return;
   if (DEMO) { STATE.hist = demoHist(); return; }
-  const rows = await api(`metrics?machine=eq.${m}&select=ts,cpu,temp,battery,net_rx&order=ts.desc&limit=120`);
+  const rows = await api(`metrics?machine=eq.${encodeURIComponent(m)}&select=ts,cpu,temp,battery,net_rx&order=ts.desc&limit=120`);
   STATE.hist = rows.reverse();
 }
 
@@ -271,18 +278,19 @@ async function loadHist() {
 // tijdens die sessie met de hoogste frequentie die ooit gemeten is TIJDENS vergelijkbaar zware
 // belasting (niet de absolute piek — die haalt de CPU juist bij weinig actieve kernen, single-core
 // turbo ligt altijd hoger dan all-core turbo, dat zou anders ten onrechte als throttling tellen).
-// Zakt de sessie duidelijk onder die belaste-referentie, dan is temperatuur de beperkende factor.
+// Zakt de sessie duidelijk onder die belaste-referentie, dan is alleen een frequentiedaling aangetoond; de oorzaak is onbekend.
 // Bewust géén hardcoded turbo-clock per CPU-model: past zich vanzelf aan elke machine aan.
 const PERF_BUSY_CPU = 65, PERF_MIN_SAMPLES = 10; // 10 x 30s = 5 min aaneengesloten
 function findSession(rows) {
   const sessions = []; let cur = null;
   for (const r of rows) {
     const cpu = num(r.cpu);
+    if (cur && Date.parse(r.ts)-Date.parse(cur[cur.length-1].ts)>90000) { sessions.push(cur);cur=null; }
     if (!isNaN(cpu) && cpu >= PERF_BUSY_CPU) { if (!cur) cur = []; cur.push(r); }
     else { if (cur) sessions.push(cur); cur = null; }
   }
   if (cur) sessions.push(cur);
-  const real = sessions.filter(s => s.length >= PERF_MIN_SAMPLES);
+  const real = sessions.filter(s => s.length >= PERF_MIN_SAMPLES && Date.parse(s[s.length-1].ts)-Date.parse(s[0].ts)>=270000);
   return real.length ? real[real.length - 1] : null;
 }
 async function loadPerf() {
@@ -291,11 +299,11 @@ async function loadPerf() {
   if (DEMO) { STATE.perf[m] = null; return; }
   try {
     const [rows, maxRows] = await Promise.all([
-      api(`metrics?machine=eq.${m}&select=ts,cpu,freq,temp&order=ts.desc&limit=5760`),   // ~48u op 30s
+      paged(`metrics?machine=eq.${encodeURIComponent(m)}&select=ts,cpu,freq,temp&ts=gte.${encodeURIComponent(new Date(Date.now()-48*3600000).toISOString())}&order=ts.desc`),   // ~48u op 30s
       // referentie voor throttling: hoogste freq ooit gemeten TIJDENS vergelijkbaar zware belasting
       // (cpu>=busy-drempel) — niet de absolute piek, want die haalt de CPU juist bij weinig actieve
       // kernen (single-core turbo ligt altijd hoger dan all-core turbo onder volle belasting).
-      api(`metrics?machine=eq.${m}&select=freq&cpu=gte.${PERF_BUSY_CPU}&freq=not.is.null&order=freq.desc&limit=1`),
+      api(`metrics?machine=eq.${encodeURIComponent(m)}&select=freq&cpu=gte.${PERF_BUSY_CPU}&freq=not.is.null&order=freq.desc&limit=1`),
     ]);
     const sess = findSession(rows.reverse());
     if (!sess) { STATE.perf[m] = { none: true }; return; }
@@ -307,7 +315,7 @@ async function loadPerf() {
     const throttled = (maxFreq && avgFreq) ? (avgFreq < maxFreq * 0.9) : null;
     let culprit = null;
     try {
-      const cr = await api(`metrics?machine=eq.${m}&ts=eq.${encodeURIComponent(peakCpuRow.ts)}&select=top_procs&limit=1`);
+      const cr = await api(`metrics?machine=eq.${encodeURIComponent(m)}&ts=eq.${encodeURIComponent(peakCpuRow.ts)}&select=top_procs&limit=1`);
       const tp = (cr[0] && asArr(cr[0].top_procs)) || [];
       culprit = tp.length ? tp[0].name : null;
     } catch (e) {}
@@ -321,7 +329,8 @@ async function loadPerf() {
 }
 
 // ── helpers ──
-const TH = () => STATE.cfg || {};
+const TH = () => ({...STATE.cfg,...((STATE.machines.find(x=>x.machine===STATE.active)||{}).thresholds||{})});
+const capability = key => !!((STATE.machines.find(x=>x.machine===STATE.active)||{}).capabilities||{})[key];
 function online(r) { const t = r && Date.parse(r.ts); return t && (Date.now() - t) / 60000 <= (TH().offline_min ?? 10); }
 function label(m) { const x = STATE.machines.find(x => x.machine === m); return x ? (x.label || m) : m; }
 
@@ -352,6 +361,7 @@ async function loadLive() {
   (rows||[]).forEach(r => {
     const base = STATE.latest[r.machine] || {};
     // alleen de live-velden overschrijven; de rest (updates, accu, disk, net, load, uptime...) blijft van de 30s-meting
+    if (!r.ts || Date.now()-Date.parse(r.ts)>10000 || Date.parse(r.ts)>Date.now()+5000) return;
     const liveFields = {};
     ["cpu","mem","temp","freq","cores","core_temps","top_procs"].forEach(k => { if (r[k] !== undefined && r[k] !== null) liveFields[k] = r[k]; });
     STATE.latest[r.machine] = { ...base, ...liveFields };
@@ -411,7 +421,12 @@ function procTick() {
 }
 
 // ── render ──
+function refreshStatus() {
+  const node=$("refresh-status");
+  if(node){node.hidden=!(STATE.updatesOpen||STATE.mgmtFocus);node.textContent="Weergave tijdelijk gepauzeerd tijdens bediening. Sluit het menu om de nieuwste metingen te zien.";}
+}
 function render() {
+  refreshStatus();
   const machs = STATE.machines.map(x => x.machine);
   if (!STATE.active || !machs.includes(STATE.active)) STATE.active = (machs.includes('pro') ? 'pro' : machs[0]);
   const d = STATE.latest[STATE.active] || {};
@@ -426,6 +441,7 @@ function render() {
           reboot=(r.extra&&r.extra.reboot_required);
     // ── ALARMEN ──
     if (disk >= (T.disk_alarm ?? 90)) alarms.push(`${lab}: schijf ${Math.round(disk)}%`);
+    for(const mount of (r.disks||[])){if(mount.mount!=="/" && num(mount.pct)>=(T.disk_alarm??90))alarms.push(`${lab}: ${mount.mount} ${Math.round(mount.pct)}%`);}
     if (temp >= (T.temp_alarm ?? 90)) alarms.push(`${lab}: ${Math.round(temp)}\u00b0`);
     if (r.net_up === false) alarms.push(`${lab}: internet weg`);
     if (r.bat_plugged === false && bat < (T.bat_min ?? 15)) alarms.push(`${lab}: accu ${Math.round(bat)}%`);
@@ -454,7 +470,7 @@ function render() {
     <div class="brand">SYSDASH<small>mission control${DEMO ? " · DEMO" : ""}</small></div>
     <div class="pill ${statusCls}${STATE.statusOpen ? " open" : ""}" id="statuspill"><span class="dot"></span>${statusSym} ${statusTxt}${statusList.length ? `<div class="statusdetail">${statusList.map(x=>esc(x)).join("<br>")}</div>` : ""}</div>
     <div class="topright">
-      <button class="topreboot" id="rebootbtn" title="${esc(label(STATE.active))} — hele PC herstarten">⚠</button>
+      ${capability("gateway") && STATE.mode[STATE.active]==="advanced" ? `<button class="topreboot" id="rebootbtn" title="${esc(label(STATE.active))} — hele PC herstarten">⚠</button>` : ""}
       <div class="clock">${hhmm()}<small>${nOn}/${machs.length} online</small></div>
     </div>`;
 
@@ -538,7 +554,7 @@ const sp = document.getElementById("statuspill"); if (sp) sp.onclick = (e) => { 
       const throttleSym = p.throttled === null ? "—" : (p.throttled ? "▲" : "✓");
       const throttleCls = p.throttled === null ? "" : (p.throttled ? "hi" : "ok");
       const throttleTxt = p.throttled === null ? "onbekend (te weinig freq-data)" :
-        (p.throttled ? `zakte weg${pct!=null?` (${pct}% van piek)`:""} — temperatuur is de rem` : `hield stand${pct!=null?` (${pct}% van piek)`:""}`);
+        (p.throttled ? `zakte weg${pct!=null?` (${pct}% van piek)`:""} — oorzaak niet vastgesteld` : `hield stand${pct!=null?` (${pct}% van piek)`:""}`);
       return `<div class="cpanel"><div class="ph">PRESTATIE <span class="ok">✓</span></div><div class="misc">
         <div class="m"><span class="n">Laatste zware sessie</span><span class="v">${relTime(p.start)} · ${p.durationMin} min</span></div>
         <div class="m"><span class="n">Piek CPU</span><span class="v">${isNaN(p.peakCpu)?"—":Math.round(p.peakCpu)+"%"}</span></div>
@@ -552,16 +568,13 @@ const sp = document.getElementById("statuspill"); if (sp) sp.onclick = (e) => { 
   // acties horen niet tussen de meetwaarden te staan, dat is te makkelijk per ongeluk te raken)
   // Basis-modus (alleen kijken, geen actie-laag): alleen een upgrade-kaart, geen energie/herstart/
   // opschonen — die bestaan simpelweg niet op een Basis-installatie (zie install/setup.sh).
-  const mode = STATE.mode[STATE.active] || "advanced";
-  if (mode === "basis") {
-    $("beheerpanel").innerHTML = `<div class="cpanel"><div class="ph">UPGRADE</div>
-      <p class="upgradetxt">Deze machine staat op <b>Basis</b> — alleen kijken. Wil je ook zelf diensten
-      kunnen herstarten/opschonen/rebooten vanaf het dashboard, en Discord-meldingen ontvangen?</p>
-      <div class="mgmtrow"><button class="mgmtbtn wide" id="upgradebtn">\u2B06 Upgrade naar Advanced</button></div>
-    </div>`;
+  const mode = STATE.mode[STATE.active] || "basis";
+  if (!capability("gateway") || mode !== "advanced") {
+    $("beheerpanel").innerHTML = `<div class="cpanel"><div class="ph">ALLEEN KIJKEN</div><p>Beheer is op deze machine niet beschikbaar. Wijzig de installatiemodus lokaal met de installer.</p></div>`;
   } else {
   $("beheerpanel").innerHTML = `
     ${(() => {
+      if (!capability("profiles")) return "";
       const pr = (STATE.profiles[STATE.active] || {});
       const active = pr.applied || pr.wish || "balanced";
       const btn = (prof, sym, lab) => `<button class="pbtn ${active===prof?"on":""}" data-prof="${prof}" data-mach="${esc(STATE.active)}">${sym} ${lab}</button>`;
@@ -575,20 +588,22 @@ const sp = document.getElementById("statuspill"); if (sp) sp.onclick = (e) => { 
     })()}
     ${(() => {
       if (!STATE.restartSel) STATE.restartSel = RESTARTS[0][0];   // onthouden, anders reset de live-ververs 'm elke 2s
-      const curLabel = (RESTARTS.find(([v]) => v === STATE.restartSel) || RESTARTS[0])[1];
+      const restarts = (STATE.machines.find(x=>x.machine===STATE.active)||{}).role === "hub" ? RESTARTS : RESTARTS.filter(([name])=>["restart-agent","restart-live"].includes(name));
+      if (!restarts.some(([name])=>name===STATE.restartSel)) STATE.restartSel="restart-agent";
+      const curLabel = (restarts.find(([v]) => v === STATE.restartSel) || RESTARTS[0])[1];
       const log = (STATE.actionLog || []).map(l => `<div class="alrow ${l.status}"><span>${l.status === "ok" ? "✓" : "▲"} ${esc(l.action)}</span><span class="alt">${hhmm(l.ts)}</span></div>`).join("") || `<div class="alrow"><span>nog geen acties</span></div>`;
       return `<div class="cpanel"><div class="ph">BEHEER <span class="ok">✓</span></div>
         <div class="mgmtrow">
           <div class="mgmtdrop${STATE.restartDropOpen ? " open" : ""}">
             <button class="mgmtdropbtn" id="restartdropbtn" type="button">${esc(curLabel)} <span class="car">▾</span></button>
-            <div class="mgmtdroplist">${RESTARTS.map(([v,l])=>`<div class="mgmtdropitem${v===STATE.restartSel?" on":""}" data-v="${v}">${esc(l)}</div>`).join("")}</div>
+            <div class="mgmtdroplist">${restarts.map(([v,l])=>`<div class="mgmtdropitem${v===STATE.restartSel?" on":""}" data-v="${v}">${esc(l)}</div>`).join("")}</div>
           </div>
           <button class="mgmtbtn" id="restartbtn">↻ Herstart</button>
         </div>
         <div class="mgmtrow"><button class="mgmtbtn wide" id="cleanupbtn">\u{1F9F9} Veilig opschonen</button></div>
         <div class="ph small">LAATSTE ACTIES</div>
         <div class="actionlog">${log}</div>
-        <div class="mgmtrow downgraderow"><button class="mgmtbtn wide subtle" id="downgradebtn">\u2B07 Downgrade naar Basis</button></div>
+        <div class="pnow">Installatiemodus wijzigen: gebruik de installer op de machine.</div>
       </div>`;
     })()}`;
   }
@@ -606,7 +621,7 @@ const sp = document.getElementById("statuspill"); if (sp) sp.onclick = (e) => { 
   const ulist = (d.extra && d.extra.updates_list) || [];
   const heldSet = STATE.holds[STATE.active] || new Set();
   const updDetail = ulist.length
-    ? `<div class="updhint">Uitvinken = deze update overslaan om 19:00. (Lijst staat stil zolang open.)</div>` +
+    ? `<div class="updhint">Uitvinken = deze update overslaan bij de volgende ingeschakelde update-run (18:50). (Lijst staat stil zolang open.)</div>` +
       `<div class="updlegend"><span class="ulg rood">\u25B2 rood = beter uitvinken (kernel/uitgesteld)</span> <span class="ulg blauw">\u2713 blauw = veilig</span></div>` +
       `<div class="updlist">` + ulist.map(pkg =>
         (() => {
@@ -618,7 +633,7 @@ const sp = document.getElementById("statuspill"); if (sp) sp.onclick = (e) => { 
           const shown = (!isObj && raw.startsWith("flatpak:")) ? raw.slice(8) : raw;
           const risk = isObj ? pkg.risk : "blauw";
           const sym = risk === "rood" ? "\u25B2" : "\u2713";
-          return `<label class="updrow ${risk}"><input type="checkbox" data-pkg="${esc(key)}" ${heldSet.has(key) ? "" : "checked"}><span class="usym">${sym}</span><span class="uname">${esc(shown)}${isFlat ? ` <em class="flatpill">flatpak</em>` : ""}</span></label>`;
+          return `<label class="updrow ${risk}"><input type="checkbox" data-pkg="${esc(key)}" ${!capability("updates") || !capability("gateway") ? "disabled" : ""} ${heldSet.has(key) ? "" : "checked"}><span class="usym">${sym}</span><span class="uname">${esc(shown)}${isFlat ? ` <em class="flatpill">flatpak</em>` : ""}</span></label>`;
         })()
       ).join("") + `</div>`
     : (isNaN(upd) ? "geen data" : "alles up-to-date");
@@ -680,11 +695,11 @@ function sparkSVG(pts) {
 
 // ── start + auto-refresh ──
 async function tick() {
-  if (STATE.updatesOpen || STATE.mgmtFocus) return;
-  try { await loadCore(); if (!STATE.active) { STATE.active = STATE.machines.find(m=>m.machine==='pro') ? 'pro' : (STATE.machines[0]||{}).machine; await loadHist(); } render(); }
-  catch (e) { document.querySelector(".app").insertBefore(el("div", "err", "Kan Supabase niet lezen: " + esc(e.message) + "<br>Controleer <code>config.js</code> (URL + anon-key)."), $("topbar")); }
+  refreshStatus();
+  try { await loadCore(); if (!STATE.active) { STATE.active = STATE.machines.some(m=>m.machine===new URLSearchParams(location.search).get('machine')) ? new URLSearchParams(location.search).get('machine') : (STATE.machines[0]||{}).machine; await loadHist(); } await loadHist(); if(!STATE.updatesOpen&&!STATE.mgmtFocus) render(); }
+  catch (e) { document.querySelector(".app").insertBefore(el("div", "err", "Kan Supabase niet lezen: " + esc(e.message) + "<br>Controleer de hubdienst en de Supabase-verbinding."), $("topbar")); }
 }
-loadCore().then(async () => { STATE.active = STATE.machines.find(m=>m.machine==='pro') ? 'pro' : (STATE.machines[0]||{}).machine; await loadHist(); await loadHolds(); await loadProfiles(); await loadActionLog(); await loadPerf(); await loadMode(STATE.active); render(); setInterval(tick, 30000); const lbeat=()=>{ if (STATE.updatesOpen || STATE.mgmtFocus) return; return loadLive().then(render).catch(()=>{}); }; lbeat(); setInterval(lbeat, 2000); const pbeat=()=>{ if (STATE.updatesOpen || STATE.mgmtFocus) return; return loadProfiles().then(render).catch(()=>{}); }; setInterval(pbeat, 6000); setInterval(()=>loadPerf().then(render).catch(()=>{}), 300000); procTick(); setInterval(procTick, 2000); })
+loadCore().then(async () => { STATE.active = STATE.machines.some(m=>m.machine===new URLSearchParams(location.search).get('machine')) ? new URLSearchParams(location.search).get('machine') : (STATE.machines[0]||{}).machine; await loadHist(); await loadHolds(); await loadProfiles(); await loadActionLog(); await loadPerf(); await loadMode(STATE.active); render(); setInterval(tick, 30000); const lbeat=()=>{ return loadLive().then(()=>{refreshStatus();if(!STATE.updatesOpen&&!STATE.mgmtFocus)render();}).catch(()=>{}); }; lbeat(); setInterval(lbeat, 2000); const pbeat=()=>{ return loadProfiles().then(()=>{if(!STATE.updatesOpen&&!STATE.mgmtFocus)render();}).catch(()=>{}); }; setInterval(pbeat, 6000); setInterval(()=>loadPerf().then(()=>{if(!STATE.updatesOpen&&!STATE.mgmtFocus)render();}).catch(()=>{}), 300000); procTick(); setInterval(procTick, 2000); })
   .catch(e => { document.querySelector(".app").insertBefore(el("div", "err", "Startfout: " + esc(e.message)), $("topbar")); });
 // (LIVE-modus vervangt de 30s-tick zolang 'ie aan staat)
 

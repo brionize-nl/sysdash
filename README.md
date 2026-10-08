@@ -1,27 +1,26 @@
 # SysDash
 
-Zelf-gehost, kleurenblind-vriendelijk systeem-monitoringsysteem voor één of meer machines.
-Agents pushen metrics naar Supabase; een web-dashboard en (optioneel) Discord-meldingen lezen
-daaruit. Twee installatieniveaus: **Basis** (alleen kijken) of **Advanced** (kijken + zelf
-diensten herstarten/opschonen/rebooten vanaf het dashboard + Discord-meldingen).
+Een privé dashboard voor één of meer machines. Linux-agents meten CPU, geheugen, temperaturen, schijven, netwerk en accu; Windows gebruikt een lichte agent. Supabase bewaart de data. Advanced voegt beheer via Tailscale en optionele Discord-rapporten toe.
 
-- **Meerdere machines** · **werkt overal** (Supabase als bron) · **kant-en-klare installer**
-- Modulair, één geheel. Zie [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) voor de architectuur.
+## Begin hier
 
-## Snel starten
+Lees [de installatiehandleiding](docs/AAN_DE_SLAG.md). Geen ISO of herinstallatie van Linux nodig: SysDash draait bovenop een bestaande Debian/Ubuntu-machine met systemd.
 
-Nog nooit Supabase/Discord/n8n gebruikt? Begin bij [`docs/AAN_DE_SLAG.md`](docs/AAN_DE_SLAG.md) —
-stap voor stap, inclusief hoe je de benodigde accounts aanmaakt.
+De begeleide installer vraagt de instellingen, controleert de database en Tailscale, installeert beschermde systeembestanden en bevestigt pas succes na een echte eerste meting.
 
-Al bekend met die onderdelen? Kort:
-1. Vul `.env` in (kopie van `.env.example`) en draai `db/schema.sql` + `db/live.sql` één keer in
-   de Supabase SQL Editor.
-2. `./install/setup.sh` op je hoofdmachine (kiest Basis of Advanced) · `./install/install-agent.sh`
-   op elke extra machine.
-3. Zie [`docs/SETUP.md`](docs/SETUP.md) voor de volledige technische details.
+```bash
+sudo bash install/setup.sh --role hub --mode basis
+```
 
-Geen secrets in deze repo — jouw ingevulde versie (met `.env` en machinenamen) hoort in een eigen
-**private** repo.
+- **Basis:** dashboard en metingen; geen systeemacties of automatische updates.
+- **Advanced:** vaste beheeracties voor toegestane Tailscale-gebruikers, met optionele Discord-rapporten.
+- **Updates:** blijven uit totdat je expliciet `--enable-updates` gebruikt.
+- **Privé:** geen publieke tunnel; de browser krijgt geen Supabase-sleutels. Extra agents krijgen uitsluitend een eigen machine-token.
 
-## Licentie
-MIT — zie [`LICENSE`](LICENSE).
+Gebruik een apart Supabase-project. De nieuwe toegangsmigratie is een wijziging van de oude publieke template; lees het [migratieplan](docs/SETUP.md) voordat je een bestaande installatie vervangt.
+
+## Controle en beperkingen
+
+Zie [de uitgevoerde controles en resterende praktijktests](docs/VALIDATION.md). Database-, browser- en foutpadtests worden ook in CI uitgevoerd. Tests met mocks zijn geen bewijs dat jouw hardware, Tailscale-regels, Windows-taak of Discord-kanaal al werkt.
+
+MIT-licentie, zie [LICENSE](LICENSE).

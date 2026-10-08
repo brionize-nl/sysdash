@@ -1,120 +1,109 @@
-# SysDash — Aan de slag
+# SysDash installeren — stap voor stap
 
-Deze gids is voor iemand die SysDash voor het eerst installeert en de losse onderdelen (Supabase,
-Discord, n8n) nog nooit heeft gebruikt. Voor de technische details, zie [`SETUP.md`](SETUP.md) en
-[`BLUEPRINT.md`](BLUEPRINT.md).
+Je hoeft je computer niet opnieuw te installeren. Je gebruikt een bestaande Linux-machine als **hub**: daar draait het dashboard. Andere machines sturen hun metingen naar dezelfde database. Begin met Basis; Advanced kan later.
 
-## Eerst: welke smaak wil je?
+## 1. Wat je klaarzet
 
-| | 🔵 Basis | 🟣 Advanced |
-|---|---|---|
-| Live dashboard bekijken | ✅ | ✅ |
-| Zelf diensten herstarten/opschonen/rebooten vanaf het dashboard | ❌ | ✅ |
-| Discord-meldingen (schijf vol, te heet, updates...) | ❌ | ✅ |
-| Wat moet je aanmaken? | Alleen een Supabase-account | Supabase + Discord-webhook + n8n |
-| Tijd | ~5 minuten | ~20-30 minuten |
+- Een Debian/Ubuntu-machine met Python 3.12 of nieuwer, systemd en een account met sudo. Andere Linux-distributies zijn nog niet getest.
+- Tailscale op de hub en op het apparaat waarop je het dashboard opent. Log ze in op jouw tailnet. Advanced Linux-agents hebben ook Tailscale nodig.
+- Een **apart Supabase-project voor SysDash**. Houd bestaande productiegegevens buiten de eerste testinstallatie.
+- De SysDash-repository als volledige map, inclusief `common.py`, `db/` en `web/assets/`.
 
-Twijfel je? Begin met **Basis** — je kunt later, met één klik op het dashboard, altijd upgraden
-naar Advanced. Niets gaat daarbij verloren.
+Tailscale en het Supabase-project zijn vereisten die je vooraf instelt; de installer doet geen accountaanmaak of stille wijzigingen aan je netwerkregels. Installeer Tailscale volgens [de officiële handleiding](https://tailscale.com/kb/1017/install).
 
----
+## 2. De database klaarzetten
 
-## Stap 1 · Supabase-account (verplicht, beide smaken)
+Open in Supabase de **SQL Editor** en voer achtereenvolgens uit:
 
-Supabase is de plek waar je meetdata terechtkomt — SysDash's "geheugen".
+1. De volledige inhoud van `db/install.sql`. Die maakt tabellen en de afgeschermde agent-API aan. De tabellen zijn standaard niet rechtstreeks leesbaar met de anon-key.
+2. Activeer de Cron-integratie/pg_cron in Supabase en voer `db/retention.sql` uit. Die ruimt oude metingen dagelijks op (30 dagen) en oude actielogs na 90 dagen. Controleer dat beide jobs bestaan.
 
-1. Ga naar **[supabase.com](https://supabase.com)** en klik rechtsboven op **Start your project**.
-2. Log in (bijvoorbeeld met een GitHub-account) en klik op **New project**.
-3. Geef het een naam (bijvoorbeeld "SysDash"), kies een wachtwoord voor de database (bewaar dit
-   ergens veilig, je hebt het zelden nodig) en een regio bij jou in de buurt. Klik **Create new
-   project**. Dit duurt ongeveer een minuut.
-4. Zodra het project klaar is: ga naar **Project Settings** (tandwiel-icoon, linksonder) →
-   **API**. Daar vind je drie dingen die je zo nodig hebt:
-   - **Project URL** (ziet eruit als `https://xxxxx.supabase.co`)
-   - **anon / public key** (een lange tekst die begint met `eyJ...`)
-   - **service_role key** (ook een lange `eyJ...`-tekst — deze is **geheim**, deel 'm met niemand)
-5. Ga naar **SQL Editor** (linkermenu) → **New query**. Open het bestand `db/schema.sql` uit deze
-   SysDash-map, kopieer de hele inhoud, plak 'm in de SQL Editor, en klik **Run**. Herhaal dit voor
-   `db/live.sql`. Dat zet de tabellen klaar — dit hoef je maar één keer te doen.
+Gebruik dit uitsluitend voor een SysDash-project: de migratie verwijdert oudere policies van de genoemde SysDash-tabellen. Maak bij een bestaande installatie eerst een databaseback-up.
 
-Bewaar de URL en de twee sleutels ergens bij de hand — de installer vraagt er zo naar.
+Zoek vervolgens de **project-URL**, **anon/publishable-key** en **service_role/secret-key** op. De service-key is een geheim dat alleen op de hub en eventueel de beheerde n8n-server hoort. Plak sleutels niet in een chat of Git-commit.
 
----
+## 3. De hub installeren
 
-## Stap 2 · De installer draaien
-
-Open een terminal in de SysDash-map en draai:
+Open een terminal in de repositorymap en voer uit:
 
 ```bash
-./install/setup.sh
+sudo bash install/setup.sh --role hub --mode basis
 ```
 
-De installer vraagt om de Supabase-gegevens van stap 1, en daarna:
+De installer vraagt:
 
-> **Basis of Advanced?**
+- De Supabase-project-URL en beide sleutels; geheimen worden tijdens invoer niet weergegeven.
+- Een unieke machinenaam, zoals `bureau-pc`. Gebruik kleine letters, cijfers, `_` of `-`, geen spaties.
+- Jouw **Tailscale-login**, bijvoorbeeld het e-mailadres waarmee je inlogt. Alleen opgegeven logins mogen het dashboard openen. Meerdere logins scheid je met een komma.
 
-Kies wat bij je past (zie de tabel hierboven). Bij **Basis** ben je na een paar minuten klaar — de
-installer laat aan het eind het dashboard-adres zien (bijvoorbeeld `http://100.x.x.x:9000`).
+De code wordt root-owned in `/opt/sysdash` geplaatst. Instellingen staan in `/etc/sysdash/sysdash.env`, niet in de Git-checkout. De services draaien als een aparte `sysdash`-gebruiker. De installer toont pas “gecontroleerd” wanneer de eerste echte meting is verstuurd en de bedoelde services actief zijn.
 
-Bij **Advanced** vraagt de installer ook meteen om een Discord-webhook — zie stap 3 hieronder als je
-die nog niet hebt.
+Open het getoonde adres `http://<Tailscale-IP>:9000` op een apparaat met Tailscale. Gewone HTTP gaat hier door de versleutelde Tailscale-verbinding. Er is geen openbare Cloudflare-link.
 
----
+## 4. Een extra Linux-machine toevoegen
 
-## Stap 3 · Discord-webhook (alleen nodig voor Advanced)
+Maak op de hub een privéconfiguratie aan, met een nieuwe unieke naam:
 
-Een webhook is een adres waar SysDash berichten naartoe kan sturen, zonder dat het een echt
-Discord-account nodig heeft.
+```bash
+sudo /opt/sysdash/.venv/bin/python install/create-agent.py laptop /root/laptop.env
+```
 
-1. Open Discord, ga naar het kanaal waar je de meldingen wil ontvangen (of maak een nieuw kanaal
-   aan, bijvoorbeeld `#sysdash`).
-2. Klik op het tandwiel-icoon naast het kanaal (**Kanaal bewerken**) → **Integraties** →
-   **Webhooks** → **Nieuwe webhook**.
-3. Geef 'm eventueel een naam/avatar, en klik **Webhook-URL kopiëren**.
-4. Plak die URL wanneer de installer erom vraagt (of later in `.env` bij `DISCORD_WEBHOOK=`).
+Dit commando draai je vanuit de repositorymap op de hub. Breng `laptop.env` via een privéverbinding naar de extra machine. Het bestand bevat een eigen token dat alleen voor `laptop` werkt; geen service-key.
 
----
+Open op die extra machine een terminal in de volledige repository en voer uit:
 
-## Stap 4 · n8n (alleen nodig voor Advanced)
+```bash
+sudo bash install/install-agent.sh --mode basis --config /pad/naar/laptop.env --noninteractive
+```
 
-n8n is de "meldingen-motor" — het bepaalt wannéér er iets naar Discord gestuurd wordt. Dit is de
-enige stap die de installer niet voor je doet, omdat n8n een losstaand programma is.
+De extra machine krijgt geen dashboardwebserver. Je blijft alle machines via de **hub** bekijken. Behandel de configuratie als een geheim en verwijder losse overdrachtskopieën nadat de installatie is gecontroleerd.
 
-1. Installeer n8n op dezelfde machine als de SysDash-hub — de makkelijkste manier:
-   ```bash
-   npx n8n
-   ```
-   (De eerste keer download je hiermee n8n; daarna kun je 'm ook als systemd-dienst laten draaien,
-   zie `SETUP.md` voor een productie-opzet.)
-2. Open n8n in je browser (meestal `http://localhost:5678`) en maak een account aan (blijft lokaal
-   op jouw machine).
-3. Maak één **Credential** aan voor Supabase: naam bijvoorbeeld "SysDash", vul de Project-URL en de
-   **service_role key** in (níet de anon key — die is voor het dashboard, niet voor n8n).
-4. **Importeer** de workflows uit de map `n8n/` van SysDash (`report.json`, `alerts.json`,
-   `battery.json`, `updates.json`, en `heartbeat.json` als je stap 5 ook doet) via **Import from
-   File** in n8n, en koppel bij elke workflow de zojuist aangemaakte Supabase-credential.
-5. **Publiceer** elke workflow (schakelaar rechtsboven in de workflow-editor).
+## 5. Een Windows-machine toevoegen
 
----
+Maak op de hub op dezelfde manier een config aan, bijvoorbeeld `windows-pc.env`. Kopieer die privé naar Windows. Installeer Python met “Add to PATH” en behoud de volledige repositorymap.
 
-## Stap 5 · Dead-man's-switch (optioneel, aanbevolen bij Advanced)
+Open PowerShell in `windows/`:
 
-Dit zorgt dat je ook een melding krijgt als SysDash zélf (of je hele netwerk) onbereikbaar wordt —
-zonder dit blijft zo'n storing onzichtbaar, want de normale meldingen lopen via dezelfde keten die
-dan stuk is.
+```powershell
+powershell -ExecutionPolicy Bypass -File install-windows.ps1 -ConfigPath C:\privé\windows-pc.env
+```
 
-1. Gratis account op **[healthchecks.io](https://healthchecks.io)**.
-2. **Add Check** → naam bijvoorbeeld "SysDash Heartbeat" → **Period 10 minutes / Grace 10 minutes**.
-3. Kopieer de ping-URL die je te zien krijgt (ziet eruit als `https://hc-ping.com/xxxxx...`).
-4. Zet die in `.env` bij `HEALTHCHECK_PING_URL=`.
-5. Herstart n8n zodat de nieuwe waarde wordt ingelezen.
+Het script controleert een meting en een echte push voordat het een taak bij inloggen registreert. Windows is alleen monitoren: geen Linux-beheeracties of ingebouwde temperatuur-/updatemetingen. Controleer na de eerste installatie en na opnieuw inloggen dat `SysDash-Agent` in Taakplanner actief is. De Windows-praktijktest op echte Windows-hardware is nog vereist.
 
----
+## 6. Advanced en Discord
 
-## Klaar — en daarna?
+Start de installer opnieuw met de expliciete rol en modus:
 
-- **Dashboard bekijken:** het adres dat de installer aan het eind toonde, ook vanaf je telefoon
-  (zelfde wifi/tailnet).
-- **Later upgraden van Basis naar Advanced:** klik op het dashboard (tabblad BEHEER) op
-  **"Upgrade naar Advanced"** — geen terminal nodig.
-- **Iets vastlopen?** Zie de sectie "Handige commando's" in [`SETUP.md`](SETUP.md).
+```bash
+sudo bash install/setup.sh --role hub --mode advanced
+```
+
+Bestaande instellingen blijven beschikbaar. De installer zet de bij de modus horende services opnieuw klaar en herstart ze met de nieuwe omgeving. Het dashboard kan vaste diensten herstarten, caches/logs opschonen en de machine rebooten. “Opschonen” verwijdert geen pakketten of kernels. Energieprofielen verschijnen alleen als `powerprofilesctl` beschikbaar is.
+
+Voor Discord: zie de n8n-stappen in [SETUP.md](SETUP.md). Een Advanced-installatie zonder n8n geeft nog geen n8n-meldingen. Moduswisselen gebeurt bewust lokaal met de installer; het dashboard kan geen installatiescripts als root starten.
+
+## 7. Automatische updates — alleen als je dat wilt
+
+Schakel updates bewust in:
+
+```bash
+sudo bash install/setup.sh --role hub --mode advanced --enable-updates
+```
+
+De timer draait dagelijks om **18:50 Europe/Amsterdam**. De updater stopt als de blokkeerlijst niet betrouwbaar is opgehaald. Hij beheert uitsluitend eigen holds en bewaart bestaande externe holds. Geen automatische reboot en geen autoremove. Systeemwijzigingen kunnen nog steeds een herstart of handmatige aandacht nodig hebben.
+
+Extra Linux-agents kunnen updates krijgen door hun installer met `--mode advanced --enable-updates` te draaien; dat vereist een eigen Discord-webhook als je ook updateberichten wilt.
+
+## Als er iets misgaat
+
+Een fout betekent **geen bevestigde installatie**. De installer kan al systeemonderdelen hebben geplaatst; herstel de genoemde oorzaak en voer dezelfde installer opnieuw uit. Er is geen beloofde automatische rollback van geïnstalleerde packages. Bewaar de eerdere instellingen/back-up tot de nieuwe installatie gecontroleerd is.
+
+Controleer lokaal:
+
+```bash
+systemctl status sysdash-agent sysdash-live sysdash-web
+journalctl -u sysdash-agent -n 50
+sudo /opt/sysdash/.venv/bin/python install/setup.py --check --noninteractive --role hub --mode basis
+```
+
+Het laatste commando draai je vanuit de repositorymap en verandert niets; het controleert configuratie en Tailscale. Deel geen complete environmentbestanden of sleutels bij foutdiagnose.

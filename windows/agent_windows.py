@@ -21,22 +21,15 @@ except ImportError:
     sys.exit("psutil ontbreekt — installeer: pip install psutil")
 
 # ─────────────────────────── config (.env) ───────────────────────────
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from common import load_env as shared_load_env, utcnow, scoped_request
+
 def load_env():
-    cfg = dict(os.environ)
-    here = os.path.dirname(os.path.abspath(__file__))
-    for path in (os.path.join(here, ".env"), os.path.join(here, "..", ".env")):
-        if os.path.isfile(path):
-            for ln in open(path):
-                ln = ln.strip()
-                if ln and not ln.startswith("#") and "=" in ln:
-                    k, v = ln.split("=", 1)
-                    cfg.setdefault(k.strip(), v.strip())
-            break
-    return cfg
+    return shared_load_env(os.path.join(os.path.dirname(__file__), ".env"))
 
 CFG = load_env()
 SUPABASE_URL = (CFG.get("SUPABASE_URL") or "").rstrip("/")
-SERVICE_KEY  = CFG.get("SUPABASE_SERVICE_KEY") or ""
+SERVICE_KEY  = CFG.get("AGENT_TOKEN") or ""
 MACHINE      = CFG.get("MACHINE_NAME") or socket.gethostname().lower()
 INTERVAL     = int(CFG.get("PUSH_INTERVAL_SEC") or 30)
 NCPU         = psutil.cpu_count() or 1
@@ -131,13 +124,7 @@ def collect():
 
 # ─────────────────────────── push naar Supabase ───────────────────────────
 def _req(path, method, body=None, extra_headers=None):
-    url = f"{SUPABASE_URL}/rest/v1/{path}"
-    headers = {"apikey": SERVICE_KEY, "Authorization": f"Bearer {SERVICE_KEY}",
-               "Content-Type": "application/json"}
-    if extra_headers: headers.update(extra_headers)
-    data = json.dumps(body).encode() if body is not None else None
-    r = urllib.request.Request(url, data=data, method=method, headers=headers)
-    return urllib.request.urlopen(r, timeout=10)
+    return scoped_request(CFG, path, method, body)
 
 _DISK_FC_CACHE = {"t": 0.0, "days": None}
 def get_disk_forecast(cur_disk):
@@ -180,8 +167,8 @@ def touch_machine():
         fn = getattr(psutil, "sensors_battery", None)
         has_battery = bool(fn and fn())
         _req("machines?on_conflict=machine", "POST",
-             {"machine": MACHINE, "last_seen": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-              "has_battery": has_battery, "kind": "laptop" if has_battery else "desktop"},
+             {"machine": MACHINE, "last_seen": utcnow(),
+              "has_battery": has_battery, "kind": "laptop" if has_battery else "desktop", "os":"windows", "role":"agent", "capabilities":{}},
              {"Prefer": "resolution=merge-duplicates,return=minimal"})
     except Exception:
         pass
@@ -206,10 +193,10 @@ def main():
     dry = "--dry-run" in sys.argv
     once = "--once" in sys.argv or dry
     if not dry and (not SUPABASE_URL or not SERVICE_KEY):
-        sys.exit("SUPABASE_URL en SUPABASE_SERVICE_KEY ontbreken (.env). Gebruik --dry-run om te testen.")
+        sys.exit("SUPABASE_URL en AGENT_TOKEN ontbreken (.env). Gebruik --dry-run om te testen.")
     print(f"SysDash Windows-agent (licht) · machine={MACHINE} · interval={INTERVAL}s · {'DRY-RUN' if dry else 'push naar '+SUPABASE_URL}", file=sys.stderr)
     if once:
-        one_cycle(dry); return
+        sys.exit(0 if one_cycle(dry) else 1)
     while True:
         t0 = time.time()
         one_cycle(False)

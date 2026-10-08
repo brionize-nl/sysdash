@@ -1,0 +1,41 @@
+name: SysDash checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  regressions:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: test-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd 'pg_isready -U postgres'
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: sudo apt-get update && sudo apt-get install -y postgresql-client libcairo2
+      - run: pip install -r requirements.txt
+      - run: python -m unittest discover -s tests -v
+      - run: node tests/dashboard.cjs
+      - run: python -m compileall -q agent actions overview render updater install windows common.py
+      - run: for file in install/*.sh updater/*.sh; do bash -n "$file"; done
+      - run: python -m playwright install --with-deps chromium
+      - run: python tests/browser.py
+      - name: Database installation, authorization and repeated migration
+        env:
+          PGPASSWORD: test-only
+        run: |
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 -c 'CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS; CREATE SCHEMA extensions;'
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 -f db/install.sql
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 -f tests/database.sql
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 -f db/install.sql
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 -c "DO \$\$BEGIN IF EXISTS(SELECT 1 FROM pg_policies WHERE policyname='legacy_open_write') THEN RAISE EXCEPTION 'Legacy policy survived';END IF;END\$\$;"

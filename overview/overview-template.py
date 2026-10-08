@@ -1,3 +1,11 @@
+import html, datetime
+
+def safe(value):
+    if isinstance(value,str):return html.escape(value,quote=True)
+    if isinstance(value,list):return [safe(x) for x in value]
+    if isinstance(value,dict):return {html.escape(k,quote=True) if isinstance(k,str) else k:safe(v) for k,v in value.items()}
+    return value
+
 def sparkline(vals, labels, title, unit, warn, alarm):
     """6 balkjes in SysDash-stijl; kleur per waarde (kleurenblind: hoogte+kleur+cijfer)."""
     bars = ""
@@ -58,15 +66,23 @@ def stt(v, warn, alarm):
     return "high" if v>=alarm else ("warn" if v>=warn else "ok")
 
 def machine_card(r, lab):
+    r=safe(r);lab=html.escape(str(lab))
+    try: age=(datetime.datetime.now(datetime.timezone.utc)-datetime.datetime.fromisoformat(r.get('ts','').replace('Z','+00:00'))).total_seconds()
+    except (ValueError,TypeError):age=float('inf')
+    if age>(r.get("_thresholds") or {}).get("offline_min",10)*60 or age< -5:return f'<div class="card"><div class="chead">{lab}</div><p>Geen recente meting — offline of nog geen data.</p></div>'
     is_laptop = r.get("battery") is not None
     ex = r.get("extra") or {}
-    hw = ex.get("hardware") or {}
+    hw = r.get("hardware") or {}
     # status
     alarms, notes = [], []
     disk=r.get("disk") or 0; temp=r.get("temp") or 0; mem=r.get("mem") or 0
-    if disk>=90: alarms.append(f"schijf {round(disk)}%")
-    elif disk>=75: notes.append(f"schijf {round(disk)}%")
-    if temp>=80: notes.append(f"{round(temp)}\u00b0")
+    th=r.get("_thresholds") or {}
+    if disk>=th.get("disk_alarm",90): alarms.append(f"schijf {round(disk)}%")
+    elif disk>=th.get("disk_warn",80): notes.append(f"schijf {round(disk)}%")
+    for mount in r.get("disks") or []:
+        if mount.get("mount")!="/" and (mount.get("pct") or 0)>=th.get("disk_alarm",90):alarms.append(f"{mount.get('mount')} {round(mount['pct'])}%")
+    if r.get("bat_plugged") is False and (r.get("battery") or 0)<th.get("bat_min",15):alarms.append(f"accu {round(r.get('battery') or 0)}%")
+    if temp>=th.get("temp_alarm",90): alarms.append(f"{round(temp)}\u00b0")
     if mem>=85: notes.append(f"RAM {round(mem)}%")
     h=r.get("bat_health")
     if h is not None and 0<h<50: notes.append(f"accu {round(h)}%")
@@ -117,7 +133,7 @@ def machine_card(r, lab):
         cpuSub += f"\n\u2937 {extra}"
     rings = (ring_svg(r.get("cpu"),"CPU",cpuSub,stt(r.get("cpu"),75,90),peak=cpu_peak) +
              ring_svg(r.get("mem"),"RAM",ramSub,stt(mem,75,90),peak=mem_peak) +
-             ring_svg(r.get("disk"),"SCHIJF",diskSub,stt(disk,75,90),limit=85))
+             ring_svg(r.get("disk"),"SCHIJF",diskSub,stt(disk,th.get("disk_warn",80),th.get("disk_alarm",90)),limit=th.get("disk_warn",80)))
     # extra regels
     def uphuman(s):
         if not s: return "?"
@@ -138,7 +154,7 @@ def machine_card(r, lab):
     if blk.get("n"):
         sparks = (sparkline(blk.get("cpu") or [], labs, "CPU", "%", 75, 90) +
                   sparkline(blk.get("mem") or [], labs, "RAM", "%", 75, 90) +
-                  sparkline(blk.get("temp") or [], labs, "TEMP", "\u00b0", 70, 85))
+                  sparkline(blk.get("temp") or [], labs, "TEMP", "\u00b0", th.get("temp_warn",th.get("temp_alarm",90)-10), th.get("temp_alarm",90)))
     return f'''<div class="card">
       <div class="chead"><span class="cname">{lab}</span>{badge}</div>
       <div class="rings">{rings}</div>

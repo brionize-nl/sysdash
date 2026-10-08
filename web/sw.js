@@ -1,6 +1,6 @@
 // SysDash service worker — netwerk-eerst, zelf-verversend.
 // BELANGRIJK: hoog CACHE_VERSION op bij elke web-wijziging → oude cache wordt gewist.
-const CACHE_VERSION = "sysdash-v4";
+const CACHE_VERSION = "sysdash-v5";
 const SHELL = ["./", "./index.html", "./style.css", "./app.js", "./config.js", "./assets/bg.jpg", "./assets/icon-192.png"];
 
 self.addEventListener("install", e => {
@@ -18,7 +18,7 @@ self.addEventListener("activate", e => {
 
 self.addEventListener("fetch", e => {
   const u = e.request.url;
-  if (u.includes("supabase.co")) return;  // data altijd rechtstreeks (nooit cachen)
+  if (u.includes("supabase.co") || new URL(u).pathname.startsWith("/api/") || !["GET"].includes(e.request.method) || new URL(u).origin !== self.location.origin || new URL(u).pathname.endsWith("config.js")) return;  // data altijd rechtstreeks (nooit cachen)
   // NETWERK-EERST: haal verse versie, val alleen terug op cache bij offline.
   // cache:"no-store" is nodig omdat de webserver geen Cache-Control-header stuurt — zonder dit
   // mag de browser zelf óók nog heuristisch cachen (RFC 7234), bovenop de service-worker-cache

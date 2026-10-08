@@ -1,82 +1,208 @@
 {
-    "name": "SysDash Heartbeat",
-    "nodes": [
-        {
-            "parameters": {
-                "rule": {
-                    "interval": [
-                        {
-                            "field": "cronExpression",
-                            "expression": "*/5 * * * *"
-                        }
-                    ]
-                }
-            },
-            "id": "n-sched",
-            "name": "Schema",
-            "type": "n8n-nodes-base.scheduleTrigger",
-            "typeVersion": 1.2,
-            "position": [
-                0,
-                0
-            ]
-        },
-        {
-            "parameters": {
-                "jsCode": "// Dead-man's-switch: alleen pingen als er een URL geconfigureerd is.\n// Ontbreekt HEALTHCHECK_PING_URL nog in .env? Dan doet deze stap niets\n// (geen foutmelding, gewoon een lege run) i.p.v. elke 5 min te falen.\nconst url = $env.HEALTHCHECK_PING_URL || '';\nif (!url) return [];\nreturn [{ json: { url } }];\n"
-            },
-            "id": "n-check",
-            "name": "URL check",
-            "type": "n8n-nodes-base.code",
-            "typeVersion": 2,
-            "position": [
-                224,
-                0
-            ]
-        },
-        {
-            "parameters": {
-                "url": "={{ $json.url }}",
-                "options": {}
-            },
-            "id": "n-ping",
-            "name": "Ping",
-            "type": "n8n-nodes-base.httpRequest",
-            "typeVersion": 4.2,
-            "position": [
-                448,
-                0
-            ]
+  "name": "SysDash Heartbeat",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/5 * * * *"
+            }
+          ]
         }
-    ],
-    "pinData": {},
-    "connections": {
-        "Schema": {
-            "main": [
-                [
-                    {
-                        "node": "URL check",
-                        "type": "main",
-                        "index": 0
-                    }
-                ]
-            ]
-        },
-        "URL check": {
-            "main": [
-                [
-                    {
-                        "node": "Ping",
-                        "type": "main",
-                        "index": 0
-                    }
-                ]
-            ]
-        }
+      },
+      "id": "n-sched",
+      "name": "Schema",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
     },
-    "active": true,
-    "settings": {
-        "executionOrder": "v1",
-        "timezone": "Europe/Amsterdam"
+    {
+      "parameters": {
+        "jsCode": "const machines=$('Inventaris').all().map(x=>x.json);const latest=$('Laatste metingen').all().map(x=>x.json);const now=Date.now();\nif(!machines.length || machines.some(m=>!latest.some(r=>r.machine===m.machine && now-Date.parse(r.ts)<600000))) throw new Error('Geen volledige recente metingen');\nconst delivery=$('Bezorgingsstatus').all()[0]?.json?.last_delivery;if(!delivery || now-Date.parse(delivery)>12*3600000)throw new Error('Geen recente succesvolle Discord-bezorging');\nif($json.status!=='ok') throw new Error('Renderer niet gezond');\nconst url=$env.HEALTHCHECK_PING_URL||'';return url?[{json:{url}}]:[];"
+      },
+      "id": "n-check",
+      "name": "URL check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "options": {}
+      },
+      "id": "n-ping",
+      "name": "Ping",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "machines",
+        "returnAll": true
+      },
+      "id": "heartbeat-machines",
+      "name": "Inventaris",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        220,
+        -120
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_ME",
+          "name": "Supabase SysDash"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "v_latest",
+        "returnAll": true
+      },
+      "id": "heartbeat-v_latest",
+      "name": "Laatste metingen",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        220,
+        -120
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_ME",
+          "name": "Supabase SysDash"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "heartbeat-render",
+      "name": "Renderer check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        300,
+        0
+      ],
+      "parameters": {
+        "url": "http://127.0.0.1:7071/health",
+        "options": {
+          "timeout": 10000
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "sysdash_monitor_state",
+        "returnAll": true
+      },
+      "id": "heartbeat-delivery",
+      "name": "Bezorgingsstatus",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        400,
+        0
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_ME",
+          "name": "Supabase SysDash"
+        }
+      },
+      "alwaysOutputData": true
     }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schema": {
+      "main": [
+        [
+          {
+            "node": "Inventaris",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "URL check": {
+      "main": [
+        [
+          {
+            "node": "Ping",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Inventaris": {
+      "main": [
+        [
+          {
+            "node": "Laatste metingen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Laatste metingen": {
+      "main": [
+        [
+          {
+            "node": "Bezorgingsstatus",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Renderer check": {
+      "main": [
+        [
+          {
+            "node": "URL check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bezorgingsstatus": {
+      "main": [
+        [
+          {
+            "node": "Renderer check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Amsterdam"
+  }
 }

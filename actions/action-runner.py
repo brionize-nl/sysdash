@@ -5,7 +5,7 @@ SysDash v12 · actie-runner (trede 1: ZELF-HERSTEL)
 Bewaakt de SysDash-diensten en herstart ALLEEN die als ze omvallen.
 Veiligheid (niet-onderhandelbaar):
   • WHITELIST-only — kent uitsluitend de vaste acties hieronder. Nooit "voer dit commando uit".
-  • Minimale rechten — restart via sudo, en de sudoers-regel staat ALLEEN deze 2 commando's toe.
+  • Minimale rechten — restart via sudo, en de root-owned helper accepteert uitsluitend vaste acties.
   • Audit-log — elke actie wordt gelogd (wat, wanneer, waarom).
   • Geen netwerk-trigger — puur lokaal. Geen open poort, geen aanvalsvlak.
 
@@ -14,16 +14,18 @@ Gebruik:
   python3 action-runner.py --once      # één controleronde
   python3 action-runner.py --dry-run   # controleert + meldt, herstart NIET
 """
-import os, sys, time, subprocess, urllib.request
+import os, sys, time, subprocess, urllib.request, json
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from common import scoped_request
 
 # ── WHITELIST: de ENIGE toegestane acties (naam → exact commando) ──
 ACTIONS = {
-    "restart-render": ["sudo", "systemctl", "restart", "sysdash-render"],
-    "restart-agent":  ["sudo", "systemctl", "restart", "sysdash-agent"],
-    # energieprofielen (geen sudo nodig; powerprofilesctl is een user-service)
-    "power-saver":       ["powerprofilesctl", "set", "power-saver"],
-    "power-balanced":    ["powerprofilesctl", "set", "balanced"],
-    "power-performance": ["powerprofilesctl", "set", "performance"],
+    "restart-render": ["sudo", "-n", "/usr/local/libexec/sysdash-action", "restart-render"],
+    "restart-agent":  ["sudo", "-n", "/usr/local/libexec/sysdash-action", "restart-agent"],
+    # energieprofielen via de vaste root-owned helper
+    "power-saver":       ["sudo","-n","/usr/local/libexec/sysdash-action","profile-power-saver"],
+    "power-balanced":    ["sudo","-n","/usr/local/libexec/sysdash-action","profile-balanced"],
+    "power-performance": ["sudo","-n","/usr/local/libexec/sysdash-action","profile-performance"],
 }
 
 # gewenst-profiel (uit Supabase) → whitelist-actienaam
@@ -39,9 +41,11 @@ WATCH = [
     {"unit": "sysdash-agent",  "health": None,                            "action": "restart-agent"},
 ]
 
+if os.environ.get('SYSDASH_ROLE')!='hub':WATCH=[w for w in WATCH if w['unit']!='sysdash-render']
+
 INTERVAL   = 60          # seconden tussen controles
 FAIL_LIMIT = 2           # zoveel keer achter elkaar 'down' → herstel (voorkomt flap)
-AUDIT      = os.path.join(os.path.dirname(os.path.abspath(__file__)), "audit.log")
+AUDIT      = os.environ.get("AUDIT_PATH", "/var/lib/sysdash/audit.log")
 _fails     = {}
 
 def audit(msg):
@@ -55,30 +59,20 @@ def audit(msg):
 
 
 # ── Supabase-kanaal voor app-gestuurde acties (WHITELIST-bewaakt) ──
-# Service-key (niet anon): deze daemon PATCHt applied_profile terug, en machine_actions
-# is sinds de RLS-fix niet meer anon-schrijfbaar (zie db/schema.sql).
+# Een eigen machine-token beperkt lezen en terugmelden tot deze machine.
 def _cfg(key):
     return os.environ.get(key, "")
 SUPA_URL = _cfg("SUPABASE_URL")
-SUPA_KEY = _cfg("SUPABASE_SERVICE_KEY")
+SUPA_KEY = _cfg("AGENT_TOKEN")
 MACHINE  = _cfg("MACHINE_NAME") or subprocess.run(["hostname"],capture_output=True,text=True).stdout.strip().lower()
 _last_profile = {"val": None}
 
 def _supa(path, method="GET", body=None):
     if not SUPA_URL or not SUPA_KEY: return None
-    url = SUPA_URL.rstrip("/") + "/rest/v1/" + path
-    data = None
-    headers = {"apikey": SUPA_KEY, "Authorization": "Bearer " + SUPA_KEY, "Content-Type": "application/json"}
-    if body is not None:
-        import json as _j; data = _j.dumps(body).encode(); headers["Prefer"] = "return=minimal"
-    req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=6) as r:
-            import json as _j
-            txt = r.read().decode()
-            return _j.loads(txt) if txt.strip() else []
-    except Exception as e:
-        return None
+        with scoped_request(dict(os.environ),path,method,body) as response:
+            return json.loads(response.read().decode())
+    except Exception: return None
 
 def current_profile():
     try:
@@ -98,11 +92,11 @@ def check_app_actions(dry):
     if not action:
         audit("GEWEIGERD app-actie: onbekend profiel '%s'" % want); return
     ok = run_action(action, dry)                      # HARDE whitelist-grens
-    if ok:
+    if ok and not dry:
         _last_profile["val"] = want
         cur = current_profile()
         _supa("machine_actions?machine=eq.%s" % MACHINE, "PATCH",
-              {"applied_profile": cur, "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ")})
+              {"applied_profile": cur, "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
         audit("app-actie toegepast: profiel -> %s (actief: %s)" % (want, cur))
 
 def systemd_active(unit):

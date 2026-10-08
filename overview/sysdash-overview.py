@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """SysDash 2x-daags overzicht → Discord. Haalt v_latest op, maakt nette samenvatting."""
-import os, sys, json, urllib.request, time
+import os, sys, json, urllib.request, time, datetime, re
+from zoneinfo import ZoneInfo
+sys.path.insert(0,os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from common import pages, supabase_headers
 
 URL  = os.environ.get("SUPABASE_URL", "")
-ANON = os.environ.get("SUPABASE_ANON_KEY", "")
+ANON = os.environ.get("SUPABASE_SERVICE_KEY", "")
 HOOK = os.environ.get("DISCORD_WEBHOOK", "")
 
 def supa(path):
     req = urllib.request.Request(URL.rstrip("/") + "/rest/v1/" + path,
-        headers={"apikey": ANON, "Authorization": "Bearer " + ANON})
+        headers=supabase_headers(ANON))
     with urllib.request.urlopen(req, timeout=10) as r:
         return json.loads(r.read().decode())
 
@@ -96,10 +99,10 @@ def machine_block(r, lab):
 def peak_detail(machine):
     """Analyseer de CPU-piek van de afgelopen 12u: veroorzaker (zwaarste proces) + hoe lang de piek aanhield."""
     import datetime
-    now = datetime.datetime.utcnow()
-    since = (now - datetime.timedelta(hours=12)).strftime("%Y-%m-%dT%H:%M:%S")
+    now = datetime.datetime.now(datetime.timezone.utc)
+    since = (now - datetime.timedelta(hours=12)).isoformat()
     try:
-        rows = supa(f"metrics?machine=eq.{machine}&ts=gte.{since}&select=ts,cpu,top_procs&order=ts.asc")
+        rows = pages(supa, f"metrics?machine=eq.{machine}&ts=gte.{since}&select=ts,cpu,top_procs&order=ts.asc")
     except Exception:
         rows = []
     if not rows:
@@ -126,7 +129,7 @@ def peak_detail(machine):
     while hi+1 < len(rows) and (rows[hi+1].get("cpu") or 0) >= thr: hi += 1
     # tijdsduur schatten uit timestamps
     def ts_of(r):
-        try: return datetime.datetime.fromisoformat(r["ts"].replace("Z","").split("+")[0])
+        try: return datetime.datetime.fromisoformat(r["ts"].replace("Z","+00:00"))
         except Exception: return None
     t_lo, t_hi = ts_of(rows[lo]), ts_of(rows[hi])
     dur_min = None
@@ -137,10 +140,10 @@ def peak_detail(machine):
 def blocks_12h(machine):
     """Verdeel de afgelopen 12u in 6 blokken van 2u; per blok gem van cpu/mem/temp."""
     import datetime
-    now = datetime.datetime.utcnow()
-    since = (now - datetime.timedelta(hours=12)).strftime("%Y-%m-%dT%H:%M:%S")
+    now = datetime.datetime.now(datetime.timezone.utc)
+    since = (now - datetime.timedelta(hours=12)).isoformat()
     try:
-        rows = supa(f"metrics?machine=eq.{machine}&ts=gte.{since}&select=ts,cpu,mem,temp&order=ts.asc")
+        rows = pages(supa, f"metrics?machine=eq.{machine}&ts=gte.{since}&select=ts,cpu,mem,temp&order=ts.asc")
     except Exception:
         rows = []
     # 6 buckets van 2u
@@ -148,7 +151,7 @@ def blocks_12h(machine):
     start = now - datetime.timedelta(hours=12)
     for r in rows:
         try:
-            t = datetime.datetime.fromisoformat(r["ts"].replace("Z","").split("+")[0])
+            t = datetime.datetime.fromisoformat(r["ts"].replace("Z","+00:00"))
         except Exception:
             continue
         idx = int((t - start).total_seconds() // 7200)
@@ -158,7 +161,7 @@ def blocks_12h(machine):
         return (sum(vals)/len(vals)) if vals else None
     labels = []
     for i in range(6):
-        h = (start + datetime.timedelta(hours=2*i)).hour
+        h = (start + datetime.timedelta(hours=2*i)).astimezone(ZoneInfo("Europe/Amsterdam")).hour
         labels.append(f"{h:02d}")
     def realmax(key):
         vals = [r[key] for r in rows if r.get(key) is not None]
@@ -176,23 +179,31 @@ def blocks_12h(machine):
 
 def main():
     rows = supa("v_latest?select=*")
-    labels = {m['machine']: m.get('label') or m['machine'] for m in supa("machines?select=machine,label")}
+    machines = supa("machines?select=machine,label,hardware,thresholds")
+    labels = {m['machine']: m.get('label') or m['machine'] for m in machines}
+    latest = {r['machine']:r for r in rows}
+    rows = [{**latest.get(m['machine'],{}), **m} for m in machines]
+    config = supa("config?select=thresholds&limit=1")
+    default = (config[0].get('thresholds') or {}).get('default',{}) if config else {}
+    for r in rows:r['_thresholds']={**default,**(r.get('thresholds') or {})}
     # verrijk elke rij met 2u-aggregaten
     for r in rows:
         r["_blocks"] = blocks_12h(r["machine"])
         r["_peak"] = peak_detail(r["machine"])
     tod = time.strftime("%H:%M")
     dagdeel = "ochtend" if int(time.strftime("%H"))<15 else "avond"
-    import importlib.util, subprocess, os as _os
+    import importlib.util, subprocess, tempfile, shutil, os as _os
     here = _os.path.dirname(_os.path.abspath(__file__))
     spec = importlib.util.spec_from_file_location("tpl", _os.path.join(here, "overview-template.py"))
     tpl = importlib.util.module_from_spec(spec); spec.loader.exec_module(tpl)
     printonly = "--print" in sys.argv or not HOOK
     for r in rows:
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}",r["machine"]): raise ValueError("Ongeldige machinenaam")
         lab = labels.get(r["machine"], r["machine"])
         html = tpl.build_html_single(r, lab, "%s \u00b7 %s" % (dagdeel, tod))
-        html_path = "/tmp/sysdash-ov-%s.html" % r["machine"]
-        png_path  = "/tmp/sysdash-ov-%s.png" % r["machine"]
+        private_dir = tempfile.mkdtemp(prefix="sysdash-overview-")
+        html_path = _os.path.join(private_dir,"overview.html")
+        png_path = _os.path.join(private_dir,"overview.png")
         open(html_path,"w").write(html)
         render = (
             "from playwright.sync_api import sync_playwright\n"
@@ -207,9 +218,10 @@ def main():
             print("gerenderd:", png_path); continue
         content = "\U0001F4CA %s \u00b7 %s %s" % (lab, dagdeel, tod)
         payload = json.dumps({"username":"SysDash","content":content})
-        subprocess.run(["curl","-s","-o","/dev/null","-F","payload_json="+payload,
+        subprocess.run(["curl","--fail-with-body","-sS","-o","/dev/null","-F","payload_json="+payload,
             "-F","file=@"+png_path+";type=image/png;filename=sysdash.png",HOOK], check=True, timeout=30)
         print("verstuurd: %s" % lab)
+        shutil.rmtree(private_dir)
 
 if __name__ == "__main__":
     main()

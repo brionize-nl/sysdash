@@ -5,7 +5,7 @@
 (() => {
 "use strict";
 const CFG = window.SYSDASH_CONFIG || {};
-const DEMO = !CFG.apiBase && (!CFG.url || !CFG.anon);
+const DEMO = !CFG.apiBase;
 const RESTARTS = [["restart-web","Dashboard"],["restart-render","Kaarten"],["restart-agent","Meting"],["restart-live","Live-modus"],["restart-tunnel","Externe link"]];
 const SECTIONS = ["overzicht", "systeem", "beheer", "historie"];
 
@@ -82,8 +82,8 @@ let LIVE_TIMER = null;
 
 // ── Supabase REST ──
 async function api(path) {
-  const r = await fetch(`${CFG.apiBase || CFG.url+"/rest/v1"}/${path}`, {
-    headers: CFG.apiBase ? {} : { apikey: CFG.anon, Authorization: `Bearer ${CFG.anon}` }
+  const r = await fetch(`${CFG.apiBase}/${path}`, {
+    headers: {}
   });
   if (!r.ok) throw new Error(`Supabase ${r.status}`);
   return r.json();
